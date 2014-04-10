@@ -41,6 +41,7 @@ import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.thrift.ThriftValidation;
+import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.Pair;
 
@@ -143,6 +144,12 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
         // CAS updates can be used to simulate a SELECT query, so should require Permission.SELECT as well.
         if (hasConditions())
             state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.SELECT);
+    }
+
+    public boolean isSystemOrTrace(ClientState state)
+    {
+        String ks = keyspace();
+        return ks.equals(Keyspace.SYSTEM_KS) || ks.equals(Tracing.TRACE_KS);
     }
 
     public void validate(ClientState state) throws InvalidRequestException

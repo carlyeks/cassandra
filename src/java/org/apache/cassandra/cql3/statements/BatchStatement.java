@@ -23,6 +23,7 @@ import java.util.*;
 import com.google.common.base.Function;
 import com.google.common.collect.*;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.tracing.Tracing;
 import org.github.jamm.MemoryMeter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -96,6 +97,16 @@ public class BatchStatement implements CQLStatement, MeasurableForPreparedCache
     {
         for (ModificationStatement statement : statements)
             statement.checkAccess(state);
+    }
+
+    public boolean isSystemOrTrace(ClientState state)
+    {
+        for (ModificationStatement statement : statements)
+        {
+            String ks = statement.keyspace();
+            return ks.equals(Keyspace.SYSTEM_KS) || ks.equals(Tracing.TRACE_KS);
+        }
+        return false;
     }
 
     // Validates a prepared batch statement without validating its nested statements.

@@ -514,4 +514,11 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     /** Sets the hinted handoff throttle in kb per second, per delivery thread. */
     public void setHintedHandoffThrottleInKB(int throttleInKB);
+    
+    /** Set the frequency, int represents every nth query to be recorded */
+    public void enableQueryRecording(int logLimit, int frequency, String logDirectory) throws IOException;
+    /** Disable query recording */
+    public void disableQueryRecording();
+    /** Flush recorded query log */
+    public void forceQueryLogFlush();
 }

@@ -21,6 +21,9 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import com.google.common.primitives.Ints;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Ints;
@@ -34,6 +37,7 @@ import org.github.jamm.MemoryMeter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.cql3.recording.QueryRecorder;
 import org.apache.cassandra.cql3.statements.*;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.composites.*;
@@ -43,6 +47,7 @@ import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.pager.QueryPager;
 import org.apache.cassandra.service.pager.QueryPagers;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.thrift.ThriftClientState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.transport.messages.ResultMessage;
@@ -59,6 +64,7 @@ public class QueryProcessor implements QueryHandler
     private static final Logger logger = LoggerFactory.getLogger(QueryProcessor.class);
     private static final MemoryMeter meter = new MemoryMeter().withGuessing(MemoryMeter.Guess.FALLBACK_BEST);
     private static final long MAX_CACHE_PREPARED_MEMORY = Runtime.getRuntime().maxMemory() / 256;
+    private static volatile AtomicInteger querylogCounter = new AtomicInteger(0);
 
     private static EntryWeigher<MD5Digest, ParsedStatement.Prepared> cqlMemoryUsageWeigher = new EntryWeigher<MD5Digest, ParsedStatement.Prepared>()
     {
@@ -227,6 +233,7 @@ public class QueryProcessor implements QueryHandler
         if (!queryState.getClientState().isInternal)
             metrics.executedUnprepared.inc();
 
+        maybeLogQuery(0, null, queryString, queryState.getClientState(), prepared, null);
         return processStatement(prepared, queryState, options);
     }
 
@@ -379,12 +386,13 @@ public class QueryProcessor implements QueryHandler
             throw new InvalidRequestException(String.format("Too many markers(?). %d markers exceed the allowed maximum of %d", boundTerms, FBUtilities.MAX_UNSIGNED_SHORT));
         assert boundTerms == prepared.boundNames.size();
 
-        return storePreparedStatement(queryString, clientState.getRawKeyspace(), prepared, forThrift);
+        return storePreparedStatement(queryString, prepared, forThrift, clientState);
     }
 
-    private static ResultMessage.Prepared storePreparedStatement(String queryString, String keyspace, ParsedStatement.Prepared prepared, boolean forThrift)
+    private static ResultMessage.Prepared storePreparedStatement(String queryString, ParsedStatement.Prepared prepared, boolean forThrift, ClientState clientState)
     throws InvalidRequestException
     {
+        String keyspace = clientState.getRawKeyspace();
         // Concatenate the current keyspace so we don't mix prepared statements between keyspace (#5352).
         // (if the keyspace is null, queryString has to have a fully-qualified keyspace so it's fine.
         String toHash = keyspace == null ? queryString : keyspace + queryString;
@@ -411,6 +419,7 @@ public class QueryProcessor implements QueryHandler
                 logger.trace("Stored prepared statement #{} with {} bind markers",
                         statementId,
                         prepared.statement.getBoundTerms());
+            	maybeLogQuery(1, statementId.bytes, queryString, clientState, prepared.statement, null);
                 return new ResultMessage.Prepared(statementId, prepared);
             }
         } finally
@@ -419,7 +428,7 @@ public class QueryProcessor implements QueryHandler
         }
     }
 
-    public ResultMessage processPrepared(CQLStatement statement, QueryState queryState, QueryOptions options)
+    public ResultMessage processPrepared(Object statementId, CQLStatement statement, QueryState queryState, QueryOptions options)
     throws RequestExecutionException, RequestValidationException
     {
         List<ByteBuffer> variables = options.getValues();
@@ -439,6 +448,10 @@ public class QueryProcessor implements QueryHandler
         }
 
         metrics.executedPrepared.inc();
+        
+	if (statementId instanceof MD5Digest)
+            maybeLogQuery(2, ((MD5Digest) statementId).bytes, "", queryState.getClientState(), statement, variables);
+
         return processStatement(statement, queryState, options);
     }
 
@@ -507,5 +520,48 @@ public class QueryProcessor implements QueryHandler
         return key instanceof MeasurableForPreparedCache
              ? ((MeasurableForPreparedCache)key).measureForPreparedCache(meter)
              : meter.measureDeep(key);
+    }
+
+    /**
+     * Checks if query should be logged based on whether it has been enabled
+     * via JMX and if the query is on a non-system keyspace.
+     * @param statementType
+     * @param statementId
+     * @param queryString query to be saved
+     * @param client statement's ClientState to be used for execution.
+     * @param statement parsed query used to retrieve keyspace
+     */
+    private static void maybeLogQuery(int statementType, byte[] statementId, String queryString, ClientState client, CQLStatement statement, List<ByteBuffer> vars)
+    {
+        QueryRecorder queryRecorder = StorageService.instance.getQueryRecorder();
+        // dont log query if SS#queryRecorder is null as the logging hasn't yet been enabled.
+        if (queryRecorder == null || isSystemOrTraceKS(statement, client))
+            return;
+
+        Integer frequency = queryRecorder.getFrequency();
+        // when at the nth query, append query to the log
+        if (querylogCounter.getAndIncrement() % frequency == 0)
+        {
+            queryRecorder.allocate((short)statementType, statementId, queryString, Thread.currentThread().getId(), vars);
+            logger.debug("Recorded query {}", queryString);
+        }
+    }
+
+    /**
+     * Check if a statement is issued on the 'system' or 'system_trace' keyspaces.
+     * @param statement CQLStatement to be verified.
+     * @param state statement's ClientState to be used for execution.
+     * @return boolean representing whether a statement is issued on the system/trace keyspaces.
+     */
+    private static boolean isSystemOrTraceKS(CQLStatement statement, ClientState state)
+    {
+        try
+        {
+            return statement.isSystemOrTrace(state);
+        }
+        catch (UnauthorizedException uex)
+        {
+            throw new RuntimeException("Auth queries cannot be logged when accessing Cassandra anonymously.", uex);
+        }
     }
 }
