@@ -87,7 +87,7 @@ public class WorkloadReplayTest extends SchemaLoader
         }
 
         // verify insert
-        UntypedResultSet insertResult = QueryProcessor.processInternal(countQuery);
+        UntypedResultSet insertResult = QueryProcessor.executeInternal(countQuery);
         assertEquals(100, insertResult.one().getLong("count"));
 
         // stop recording and clear the cf
@@ -95,7 +95,7 @@ public class WorkloadReplayTest extends SchemaLoader
         ColumnFamilyStore cfs = Keyspace.open("Keyspace1").getColumnFamilyStore("StandardReplay");
         cfs.truncateBlocking();
         // verify truncation
-        UntypedResultSet truncateResult = QueryProcessor.processInternal(countQuery);
+        UntypedResultSet truncateResult = QueryProcessor.executeInternal(countQuery);
         assertEquals(0, truncateResult.one().getLong("count"));
 
         // read the query log
@@ -108,12 +108,12 @@ public class WorkloadReplayTest extends SchemaLoader
         // replay without timeout
         for (File logLocation : logs)
             replayInstance.replay(false, 1000000, host, port, replayInstance.read(logLocation));
-        UntypedResultSet replayResult = QueryProcessor.processInternal(countQuery);
+        UntypedResultSet replayResult = QueryProcessor.executeInternal(countQuery);
         assertEquals(100, replayResult.one().getLong("count"));
         // replay with timeout of 1s and with delay simulation.
         for (File logLocation : logs)
             replayInstance.replay(true, 1000000, host, port, replayInstance.read(logLocation));
-        UntypedResultSet replayResultWithDelay = QueryProcessor.processInternal(countQuery);
+        UntypedResultSet replayResultWithDelay = QueryProcessor.executeInternal(countQuery);
         assertEquals(200, replayResultWithDelay.one().getLong("count"));
 
         // remove the test log
@@ -138,13 +138,13 @@ public class WorkloadReplayTest extends SchemaLoader
             // generate timeuuid (equilvilant to using now() cql3 function) and add it to query options.
             ArrayList<ByteBuffer> vars = new ArrayList<>();
             vars.add(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes()));
-            QueryOptions qp = new QueryOptions(ConsistencyLevel.ONE, vars);
+            QueryOptions qp = QueryOptions.forInternalCalls(ConsistencyLevel.ONE, vars);
 
             QueryProcessor.instance.processPrepared(p.statementId, cql, QueryState.forInternalCalls(), qp);
         }
 
         // verify insert
-        UntypedResultSet insertResult = QueryProcessor.processInternal(countQuery);
+        UntypedResultSet insertResult = QueryProcessor.executeInternal(countQuery);
         assertEquals(50, insertResult.one().getLong("count"));
 
         // stop recording and clear the cf
@@ -152,7 +152,7 @@ public class WorkloadReplayTest extends SchemaLoader
         ColumnFamilyStore cfs = Keyspace.open("Keyspace1").getColumnFamilyStore("StandardReplay");
         cfs.truncateBlocking();
         // verify truncation
-        UntypedResultSet truncateResult = QueryProcessor.processInternal(countQuery);
+        UntypedResultSet truncateResult = QueryProcessor.executeInternal(countQuery);
         assertEquals(0, truncateResult.one().getLong("count"));
 
         // read the query log
@@ -165,7 +165,7 @@ public class WorkloadReplayTest extends SchemaLoader
         // // replay without timeout
         for (File logLocation : logs)
             replayInstance.replay(false, 1000000, host, port, replayInstance.read(logLocation));
-        UntypedResultSet replayResult = QueryProcessor.processInternal(countQuery);
+        UntypedResultSet replayResult = QueryProcessor.executeInternal(countQuery);
         assertEquals(50, replayResult.one().getLong("count"));
 
         for (File log : logs)
