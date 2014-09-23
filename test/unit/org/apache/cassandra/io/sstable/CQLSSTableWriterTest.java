@@ -123,6 +123,44 @@ public class CQLSSTableWriterTest
         assertEquals(12, row.getInt("v2"));
     }
 
+    private void runMultipleTableTest(File dataDir, String ks, String table) throws Exception
+    {
+        String schema = String.format("CREATE TABLE %s.%s ("
+                + "  k int PRIMARY KEY,"
+                + "  v1 text,"
+                + "  v2 int"
+                + ")", ks, table);
+        String insert = String.format("INSERT INTO %s.%s (k, v1, v2) VALUES (?, ?, ?)", ks, table);
+        CQLSSTableWriter writer = CQLSSTableWriter.builder()
+                .inDirectory(dataDir)
+                .forTable(schema)
+                .withPartitioner(StorageService.instance.getPartitioner())
+                .using(insert).build();
+
+        writer.addRow(0, "test1", 24);
+        writer.addRow(1, "test2", null);
+        writer.addRow(2, "test3", 42);
+        writer.addRow(ImmutableMap.<String, Object>of("k", 3, "v2", 12));
+        writer.close();
+    }
+
+    @Test
+    public void testUsingMultipleTables() throws Exception
+    {
+        String KS = "cql_keyspace";
+        String TABLE1 = "table1";
+        String TABLE2 = "table2";
+
+        File tempdir = Files.createTempDir();
+        File dataDir1 = new File(tempdir.getAbsolutePath() + File.separator + KS + File.separator + TABLE1);
+        File dataDir2 = new File(tempdir.getAbsolutePath() + File.separator + KS + File.separator + TABLE2);
+        assert dataDir1.mkdirs();
+        assert dataDir2.mkdirs();
+
+        runMultipleTableTest(dataDir1, KS, TABLE1);
+        runMultipleTableTest(dataDir2, KS, TABLE2);
+    }
+
     @Test
     public void testSyncWithinPartition() throws Exception
     {
