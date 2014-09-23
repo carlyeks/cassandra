@@ -19,6 +19,7 @@ package org.apache.cassandra.io.sstable;
 
 import java.io.File;
 import java.util.StringTokenizer;
+import java.util.UUID;
 
 import com.google.common.base.Objects;
 
@@ -35,6 +36,60 @@ import static org.apache.cassandra.io.sstable.Component.separator;
  */
 public class Descriptor
 {
+    public static class TempDescriptor extends Descriptor
+    {
+        public final String generation;
+
+        public TempDescriptor(Version version, File directory, String ksname, String cfname, UUID generation, boolean temp)
+        {
+            this(version, directory, ksname, cfname, generation.toString().replace("-", ""), temp);
+        }
+
+        public TempDescriptor(Version version, File directory, String ksname, String cfname, String generation, boolean temp)
+        {
+            super(version, directory, ksname, cfname, -1, temp);
+            this.generation = generation;
+        }
+
+        public Descriptor withGeneration(int newGeneration)
+        {
+            throw new IllegalStateException("Cannot set generation of a TempDescriptor");
+        }
+
+        /**
+         * @param temporary temporary flag
+         * @return A clone of this descriptor with the given 'temporary' status.
+         */
+        public Descriptor asTemporary(boolean temporary)
+        {
+            return new TempDescriptor(version, directory, ksname, cfname, generation, temporary);
+        }
+
+        public String baseFilename()
+        {
+            StringBuilder buff = new StringBuilder();
+            buff.append(directory).append(File.separatorChar);
+            buff.append(ksname).append(separator);
+            buff.append(cfname).append(separator);
+            if (temporary)
+                buff.append(SSTable.TEMPFILE_MARKER).append(separator);
+            buff.append(version).append(separator);
+            buff.append(generation);
+            return buff.toString();
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (o == this)
+                return true;
+            if (!(o instanceof TempDescriptor))
+                return false;
+            TempDescriptor that = (TempDescriptor)o;
+            return that.directory.equals(this.directory) && that.generation == this.generation && that.ksname.equals(this.ksname) && that.cfname.equals(this.cfname) && that.temporary == this.temporary;
+        }
+    }
+
     // versions are denoted as [major][minor].  Minor versions must be forward-compatible:
     // new fields are allowed in e.g. the metadata component, but fields can't be removed
     // or have their size changed.
@@ -248,14 +303,25 @@ public class Descriptor
         Version version = new Version(nexttok);
 
         nexttok = st.nextToken();
-        int generation = Integer.parseInt(nexttok);
+        int generation = -1;
+        String uniqueGeneration = null;
+        try
+        {
+            generation = Integer.parseInt(nexttok);
+        }
+        catch (NumberFormatException e)
+        {
+            uniqueGeneration = nexttok;
+        }
 
         // component suffix
         String component = null;
         if (!skipComponent)
             component = st.nextToken();
         directory = directory != null ? directory : new File(".");
-        return Pair.create(new Descriptor(version, directory, ksname, cfname, generation, temporary), component);
+        return Pair.create(uniqueGeneration == null
+                                            ? new Descriptor(version, directory, ksname, cfname, generation, temporary)
+                                            : new TempDescriptor(version, directory, ksname, cfname, uniqueGeneration, temporary), component);
     }
 
     /**

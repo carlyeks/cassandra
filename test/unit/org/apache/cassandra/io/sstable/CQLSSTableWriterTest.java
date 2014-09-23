@@ -30,16 +30,12 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
-import org.apache.cassandra.SchemaLoader;
-import org.apache.cassandra.Util;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.*;
-import org.apache.cassandra.db.*;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.service.StorageService;
-import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.OutputHandler;
 
@@ -49,6 +45,28 @@ public class CQLSSTableWriterTest
     public static void setup() throws Exception
     {
         StorageService.instance.initServer();
+    }
+
+
+    private void runTableTest(File dataDir, String ks, String table, int start) throws Exception
+    {
+        String schema = String.format("CREATE TABLE %s.%s ("
+                + "  k int PRIMARY KEY,"
+                + "  v1 text,"
+                + "  v2 int"
+                + ")", ks, table);
+        String insert = String.format("INSERT INTO %s.%s (k, v1, v2) VALUES (?, ?, ?)", ks, table);
+        CQLSSTableWriter writer = CQLSSTableWriter.builder()
+                .inDirectory(dataDir)
+                .forTable(schema)
+                .withPartitioner(StorageService.instance.getPartitioner())
+                .using(insert).build();
+
+        writer.addRow(start * 4, "test1", 24);
+        writer.addRow(start * 4 + 1, "test2", null);
+        writer.addRow(start * 4 + 2, "test3", 42);
+        writer.addRow(ImmutableMap.<String, Object>of("k", start * 4 + 3, "v2", 12));
+        writer.close();
     }
 
     @Test
@@ -61,23 +79,7 @@ public class CQLSSTableWriterTest
         File dataDir = new File(tempdir.getAbsolutePath() + File.separator + KS + File.separator + TABLE);
         assert dataDir.mkdirs();
 
-        String schema = "CREATE TABLE cql_keyspace.table1 ("
-                      + "  k int PRIMARY KEY,"
-                      + "  v1 text,"
-                      + "  v2 int"
-                      + ")";
-        String insert = "INSERT INTO cql_keyspace.table1 (k, v1, v2) VALUES (?, ?, ?)";
-        CQLSSTableWriter writer = CQLSSTableWriter.builder()
-                                                  .inDirectory(dataDir)
-                                                  .forTable(schema)
-                                                  .withPartitioner(StorageService.instance.getPartitioner())
-                                                  .using(insert).build();
-
-        writer.addRow(0, "test1", 24);
-        writer.addRow(1, "test2", null);
-        writer.addRow(2, "test3", 42);
-        writer.addRow(ImmutableMap.<String, Object>of("k", 3, "v2", 12));
-        writer.close();
+        runTableTest(dataDir, KS, TABLE, 0);
 
         SSTableLoader loader = new SSTableLoader(dataDir, new SSTableLoader.Client()
         {
@@ -123,27 +125,6 @@ public class CQLSSTableWriterTest
         assertEquals(12, row.getInt("v2"));
     }
 
-    private void runMultipleTableTest(File dataDir, String ks, String table) throws Exception
-    {
-        String schema = String.format("CREATE TABLE %s.%s ("
-                + "  k int PRIMARY KEY,"
-                + "  v1 text,"
-                + "  v2 int"
-                + ")", ks, table);
-        String insert = String.format("INSERT INTO %s.%s (k, v1, v2) VALUES (?, ?, ?)", ks, table);
-        CQLSSTableWriter writer = CQLSSTableWriter.builder()
-                .inDirectory(dataDir)
-                .forTable(schema)
-                .withPartitioner(StorageService.instance.getPartitioner())
-                .using(insert).build();
-
-        writer.addRow(0, "test1", 24);
-        writer.addRow(1, "test2", null);
-        writer.addRow(2, "test3", 42);
-        writer.addRow(ImmutableMap.<String, Object>of("k", 3, "v2", 12));
-        writer.close();
-    }
-
     @Test
     public void testUsingMultipleTables() throws Exception
     {
@@ -157,8 +138,8 @@ public class CQLSSTableWriterTest
         assert dataDir1.mkdirs();
         assert dataDir2.mkdirs();
 
-        runMultipleTableTest(dataDir1, KS, TABLE1);
-        runMultipleTableTest(dataDir2, KS, TABLE2);
+        runTableTest(dataDir1, KS, TABLE1, 0);
+        runTableTest(dataDir2, KS, TABLE2, 0);
     }
 
     @Test
@@ -195,5 +176,86 @@ public class CQLSSTableWriterTest
             }
         };
         assert tempdir.list(filterDataFiles).length > 1 : Arrays.toString(tempdir.list(filterDataFiles));
+    }
+
+    private class ConcurrentCQLSSTableWriter implements Runnable
+    {
+        private final File dataDir;
+        private final String ks, table;
+        private final int start;
+        private Exception exception;
+
+        public ConcurrentCQLSSTableWriter(File dataDir, String ks, String table, int start)
+        {
+            this.dataDir = dataDir;
+            this.ks = ks;
+            this.table = table;
+            this.start = start;
+        }
+
+
+        @Override
+        public void run()
+        {
+            try
+            {
+                runTableTest(dataDir, ks, table, start);
+            }
+            catch (Exception e)
+            {
+                this.exception = e;
+            }
+        }
+    }
+
+    @Test
+    public void testConcurrentWriters() throws Exception
+    {
+        String KS = "cql_keyspace";
+        String TABLE = "table1";
+
+        File tempdir = Files.createTempDir();
+        File dataDir = new File(tempdir.getAbsolutePath() + File.separator + KS + File.separator + TABLE);
+        assert dataDir.mkdirs();
+
+        int CONCURRENT_WRITERS = 10;
+        ConcurrentCQLSSTableWriter[] writers = new ConcurrentCQLSSTableWriter[CONCURRENT_WRITERS];
+        Thread[] threads = new Thread[CONCURRENT_WRITERS];
+        for (int i = 0; i < CONCURRENT_WRITERS; i++)
+        {
+            ConcurrentCQLSSTableWriter writer = new ConcurrentCQLSSTableWriter(dataDir, KS, TABLE, i);
+            writers[i] = writer;
+            Thread thread = new Thread(writer);
+            threads[i] = thread;
+            thread.start();
+        }
+
+        for (int i = 0; i < CONCURRENT_WRITERS; i++)
+        {
+            threads[i].join(5000);
+            assert !threads[i].isAlive() : "Thread did not exit within 1 second";
+            if (writers[i].exception != null)
+            {
+                throw writers[i].exception;
+            }
+        }
+        // TODO: read in the files and ensure they were not mangled
+
+        SSTableLoader loader = new SSTableLoader(dataDir, new SSTableLoader.Client()
+        {
+            public void init(String keyspace)
+            {
+                for (Range<Token> range : StorageService.instance.getLocalRanges("cql_keyspace"))
+                    addRangeForEndpoint(range, FBUtilities.getBroadcastAddress());
+                setPartitioner(StorageService.getPartitioner());
+            }
+
+            public CFMetaData getCFMetaData(String keyspace, String cfName)
+            {
+                return Schema.instance.getCFMetaData(keyspace, cfName);
+            }
+        }, new OutputHandler.SystemOutput(false, false));
+
+        loader.stream().get();
     }
 }

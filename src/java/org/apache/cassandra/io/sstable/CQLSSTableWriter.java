@@ -336,37 +336,39 @@ public class CQLSSTableWriter implements Closeable
         {
             try
             {
-                this.schema = getStatement(schema, CreateTableStatement.class, "CREATE TABLE").left.getCFMetaData().rebuild();
-
-                KSMetaData ksm = Schema.instance.getKSMetaData(this.schema.ksName);
-                if (ksm == null)
+                synchronized (Builder.class)
                 {
-                    // We need to register the keyspace/table metadata through Schema, otherwise we won't be able to properly
-                    // build the insert statement in using().
-                    ksm = KSMetaData.newKeyspace(this.schema.ksName,
-                            AbstractReplicationStrategy.getClass("org.apache.cassandra.locator.SimpleStrategy"),
-                            ImmutableMap.of("replication_factor", "1"),
-                            true,
-                            Collections.singleton(this.schema));
+                    this.schema = getStatement(schema, CreateTableStatement.class, "CREATE TABLE").left.getCFMetaData().rebuild();
 
-                    Schema.instance.load(ksm);
-                }
-                else
-                {
-                    // If we already have the Keyspace defined, we must add to the KSM instead of writing a new one
-                    if (!ksm.cfMetaData().containsKey(this.schema.cfName))
+                    KSMetaData ksm = Schema.instance.getKSMetaData(this.schema.ksName);
+                    if (ksm == null)
                     {
-                        ksm = KSMetaData.cloneWith(ksm, Iterables.concat(ksm.cfMetaData().values(), Collections.singleton(this.schema)));
-                        Schema.instance.load(this.schema);
+                        // We need to register the keyspace/table metadata through Schema, otherwise we won't be able to properly
+                        // build the insert statement in using().
+                        ksm = KSMetaData.newKeyspace(this.schema.ksName,
+                                AbstractReplicationStrategy.getClass("org.apache.cassandra.locator.SimpleStrategy"),
+                                ImmutableMap.of("replication_factor", "1"),
+                                true,
+                                Collections.singleton(this.schema));
 
-                        Schema.instance.setKeyspaceDefinition(ksm);
+                        Schema.instance.load(ksm);
                     }
                     else
                     {
-                        ksm.cfMetaData().get(this.schema.cfName).validateCompatility(this.schema);
+                        // If we already have the Keyspace defined, we must add to the KSM instead of writing a new one
+                        if (!ksm.cfMetaData().containsKey(this.schema.cfName))
+                        {
+                            ksm = KSMetaData.cloneWith(ksm, Iterables.concat(ksm.cfMetaData().values(), Collections.singleton(this.schema)));
+                            Schema.instance.load(this.schema);
+
+                            Schema.instance.setKeyspaceDefinition(ksm);
+                        }
+                        else
+                        {
+                            ksm.cfMetaData().get(this.schema.cfName).validateCompatility(this.schema);
+                        }
                     }
                 }
-
                 return this;
             }
             catch (RequestValidationException e)

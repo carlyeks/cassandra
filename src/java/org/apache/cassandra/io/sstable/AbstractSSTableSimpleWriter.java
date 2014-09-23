@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -64,26 +65,12 @@ public abstract class AbstractSSTableSimpleWriter implements Closeable
     // find available generation and pick up filename from that
     protected static String makeFilename(File directory, final String keyspace, final String columnFamily)
     {
-        final Set<Descriptor> existing = new HashSet<Descriptor>();
-        directory.list(new FilenameFilter()
+        String file;
+        do
         {
-            public boolean accept(File dir, String name)
-            {
-                Pair<Descriptor, Component> p = SSTable.tryComponentFromFilename(dir, name);
-                Descriptor desc = p == null ? null : p.left;
-                if (desc == null)
-                    return false;
-
-                if (desc.cfname.equals(columnFamily))
-                    existing.add(desc);
-
-                return false;
-            }
-        });
-        int maxGen = 0;
-        for (Descriptor desc : existing)
-            maxGen = Math.max(maxGen, desc.generation);
-        return new Descriptor(directory, keyspace, columnFamily, maxGen + 1, true).filenameFor(Component.DATA);
+            file = new Descriptor.TempDescriptor(Descriptor.Version.CURRENT, directory, keyspace, columnFamily, UUID.randomUUID(), true).filenameFor(Component.DATA);
+        } while (new File(file).exists());
+        return file;
     }
 
     /**

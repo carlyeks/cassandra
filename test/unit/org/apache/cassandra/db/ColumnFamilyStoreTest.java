@@ -1715,7 +1715,8 @@ public class ColumnFamilyStoreTest extends SchemaLoader
             {
                 SSTableMetadata.Collector collector = SSTableMetadata.createCollector(cfmeta.comparator);
                 collector.addAncestor(sstable1.descriptor.generation); // add ancestor from previously written sstable
-                return new SSTableWriter(makeFilename(directory, metadata.ksName, metadata.cfName),
+                String file = new Descriptor(directory, metadata.ksName, metadata.cfName, 1, true).filenameFor(Component.DATA);
+                return new SSTableWriter(file,
                                          0,
                                          metadata,
                                          StorageService.getPartitioner(),
