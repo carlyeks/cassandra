@@ -791,6 +791,16 @@ public class DatabaseDescriptor
         return conf.batch_size_warn_threshold_in_kb * 1024;
     }
 
+    public static int getBatchSizeFailThreshold()
+    {
+        return conf.batch_size_fail_threshold_in_kb * 1024;
+    }
+
+    public static void setBatchSizeFailThreshold(int threshold)
+    {
+        conf.batch_size_fail_threshold_in_kb = threshold / 1024;
+    }
+
     public static Collection<String> getInitialTokens()
     {
         return tokensFromString(System.getProperty("cassandra.initial_token", conf.initial_token));
