@@ -67,7 +67,7 @@ table_definition: |
 columnspec:
   - name: name
     size: uniform(1..1000)
-    population: uniform(1..1M)     # the range of unique values to select for the field (default is 100Billion)
+    population: uniform(1..100B)     # the range of unique values to select for the field (default is 100Billion)
   - name: date
     cluster: uniform(20..40)
   - name: lval

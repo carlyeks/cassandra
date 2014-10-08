@@ -348,139 +348,94 @@ public class LeveledManifest implements CompactionManifest
             }
             return null;
         }
-        // If overlapping is not enabled, need to start search at the highest generation instead of the lowest.
-        if (maxOverlappingLevel == 0)
+        for (int i = 0; i < generations.length; i++)
         {
-            for (int i = generations.length - 1; i > 0; i--)
+            List<SSTableReader> sstables = getLevel(i);
+            if (sstables.isEmpty())
+                continue; // mostly this just avoids polluting the debug log with zero scores
+            // we want to calculate score excluding compacting ones
+            Set<SSTableReader> sstablesInLevel = Sets.newHashSet(sstables);
+            Set<SSTableReader> remaining = Sets.difference(sstablesInLevel, cfs.getDataTracker().getCompacting());
+            double score = (double) SSTableReader.getTotalBytes(remaining) / (double) maxBytesForLevel(i);
+            logger.debug("Compaction score for level {} is {}", i, score);
+
+            if (score > 1.001)
             {
-                List<SSTableReader> sstables = getLevel(i);
-                if (sstables.isEmpty())
-                    continue; // mostly this just avoids polluting the debug log with zero scores
-                // we want to calculate score excluding compacting ones
-                Set<SSTableReader> sstablesInLevel = Sets.newHashSet(sstables);
-                Set<SSTableReader> remaining = Sets.difference(sstablesInLevel, cfs.getDataTracker().getCompacting());
-                double score = (double) SSTableReader.getTotalBytes(remaining) / (double) maxBytesForLevel(i);
-                logger.debug("Compaction score for level {} is {}", i, score);
-
-                if (score > 1.001) {
-                    // before proceeding with a higher level, let's see if L0 is far enough behind to warrant STCS
-                    if (!DatabaseDescriptor.getDisableSTCSInL0()
-                            && getLevel(0).size() > MAX_COMPACTING_L0)
-                    {
-                        List<SSTableReader> mostInteresting = getSSTablesForSTCS(getLevel(0));
-                        if (!mostInteresting.isEmpty())
-                        {
-                            logger.debug("L0 is too far behind, performing size-tiering there first");
-                            return new CompactionCandidate(mostInteresting, 0, Long.MAX_VALUE);
-                        }
-                    }
-
-                    Collection<SSTableReader> candidates = getCandidatesForUplevelCompaction(i);
-                    if (!candidates.isEmpty())
-                    {
-                        int nextLevel = getNextLevel(candidates);
-                        candidates = getOverlappingStarvedSSTables(nextLevel, candidates);
-                        if (logger.isDebugEnabled())
-                            logger.debug("Compaction candidates for L{} are {}", i, toString(candidates));
-                        return new CompactionCandidate(candidates, nextLevel, cfs.getCompactionStrategy().getMaxSSTableBytes());
-                    }
-                    else
-                    {
-                        logger.debug("No compaction candidates for L{}", i);
-                    }
+                Collection<SSTableReader> candidates = getCandidatesForUplevelCompaction(i);
+                if (!candidates.isEmpty())
+                {
+                    int nextLevel = getNextLevel(candidates);
+                    candidates = getOverlappingStarvedSSTables(nextLevel, candidates);
+                    if (logger.isDebugEnabled())
+                        logger.debug("Compaction candidates for L{} are {}", i, toString(candidates));
+                    return new CompactionCandidate(candidates, nextLevel, cfs.getCompactionStrategy().getMaxSSTableBytes());
+                }
+                else
+                {
+                    logger.debug("No compaction candidates for L{}", i);
                 }
             }
         }
-        else
+
+        // All levels are less than the maximum, so let's see if we should do a consolidating compaction in any
+        // overlapping level
+        int overlappingLevel = -1;
+        double overlappingScore = 0.0;
+        int sstableCountLevel = -1;
+        double sstableCountScore = 0.0;
+        for (int i = 0; i <= maxOverlappingLevel; i++)
         {
-            for (int i = 0; i < generations.length; i++)
+            double sscScore, olScore;
             {
-                List<SSTableReader> sstables = getLevel(i);
-                if (sstables.isEmpty())
-                    continue; // mostly this just avoids polluting the debug log with zero scores
-                // we want to calculate score excluding compacting ones
-                Set<SSTableReader> sstablesInLevel = Sets.newHashSet(sstables);
-                Set<SSTableReader> remaining = Sets.difference(sstablesInLevel, cfs.getDataTracker().getCompacting());
-                double score = (double) SSTableReader.getTotalBytes(remaining) / (double)maxBytesForLevel(i);
-                logger.debug("Compaction score for level {} is {}", i, score);
-
-                if (score > 1.001)
+                // For the level, let's figure out what the number of files should (optimally) be
+                long optimalSSTableNumber = maxBytesForLevel(i) / maxSSTableSizeInBytes;
+                sscScore = ((double) getLevelSize(i)) / optimalSSTableNumber;
+                if (sscScore > sstableCountScore)
                 {
-                    Collection<SSTableReader> candidates = getCandidatesForUplevelCompaction(i);
-                    if (!candidates.isEmpty())
-                    {
-                        int nextLevel = getNextLevel(candidates);
-                        candidates = getOverlappingStarvedSSTables(nextLevel, candidates);
-                        if (logger.isDebugEnabled())
-                            logger.debug("Compaction candidates for L{} are {}", i, toString(candidates));
-                        return new CompactionCandidate(candidates, nextLevel, cfs.getCompactionStrategy().getMaxSSTableBytes());
-                    }
-                    else
-                    {
-                        logger.debug("No compaction candidates for L{}", i);
-                    }
+                    sstableCountScore = sscScore;
+                    sstableCountLevel = i;
                 }
             }
 
-            // All levels are less than the maximum, so let's see if we should do a consolidating compaction in any
-            // overlapping level
-            int overlappingLevel= -1;
-            double overlappingScore = 0.0;
-            int sstableCountLevel = -1;
-            double sstableCountScore = 0.0;
-            for (int i = 0; i <= maxOverlappingLevel; i++)
             {
-                double sscScore, olScore;
+                olScore = calculateOverlappingScore(i);
+                if (olScore > overlappingScore)
                 {
-                    // For the level, let's figure out what the number of files should (optimally) be
-                    long optimalSSTableNumber = maxBytesForLevel(i) / maxSSTableSizeInBytes;
-                    sscScore = ((double) getLevelSize(i)) / optimalSSTableNumber;
-                    if (sscScore > sstableCountScore)
-                    {
-                        sstableCountScore = sscScore;
-                        sstableCountLevel = i;
-                    }
+                    overlappingScore = olScore;
+                    overlappingLevel = i;
                 }
-
-                {
-                    olScore = calculateOverlappingScore(i);
-                    if (olScore > overlappingScore)
-                    {
-                        overlappingScore = olScore;
-                        overlappingLevel = i;
-                    }
-                }
-                logger.debug("Overlapping scores for L{}: sscScore {}, olScore {}", i, sscScore, olScore);
             }
-
-            if (overlappingScore > 0)
-            {
-                Collection<SSTableReader> candidates = getCandidatesForSameLevelCompaction(overlappingLevel, MAX_COMPACTING_L0 * maxSSTableSizeInBytes);
-                if (candidates.isEmpty())
-                {
-                    return null;
-                }
-
-                // We have to at least compact to L1
-                int compactToLevel = 1;
-                for (SSTableReader sstable: candidates)
-                {
-                    if (sstable.getSSTableLevel() > compactToLevel)
-                        compactToLevel = sstable.getSSTableLevel();
-                }
-                return new CompactionCandidate(candidates, compactToLevel, cfs.getCompactionStrategy().getMaxSSTableBytes());
-            }
-            else if (sstableCountScore > 1.001)
-            {
-                Collection<SSTableReader> candidates = getCandidatesForUplevelCompaction(sstableCountLevel);
-                if (candidates.isEmpty())
-                {
-                    return null;
-                }
-
-                return new CompactionCandidate(candidates, getNextLevel(candidates), cfs.getCompactionStrategy().getMaxSSTableBytes());
-            }
+            logger.debug("Overlapping scores for L{}: sscScore {}, olScore {}", i, sscScore, olScore);
         }
+
+        if (overlappingScore > 0)
+        {
+            Collection<SSTableReader> candidates = getCandidatesForSameLevelCompaction(overlappingLevel, MAX_COMPACTING_L0 * maxSSTableSizeInBytes);
+            if (candidates.isEmpty())
+            {
+                return null;
+            }
+
+            // We have to at least compact to L1
+            int compactToLevel = 1;
+            for (SSTableReader sstable : candidates)
+            {
+                if (sstable.getSSTableLevel() > compactToLevel)
+                    compactToLevel = sstable.getSSTableLevel();
+            }
+            return new CompactionCandidate(candidates, compactToLevel, cfs.getCompactionStrategy().getMaxSSTableBytes());
+        }
+        else if (sstableCountScore > 1.001)
+        {
+            Collection<SSTableReader> candidates = getCandidatesForUplevelCompaction(sstableCountLevel);
+            if (candidates.isEmpty())
+            {
+                return null;
+            }
+
+            return new CompactionCandidate(candidates, getNextLevel(candidates), cfs.getCompactionStrategy().getMaxSSTableBytes());
+        }
+
         return null;
     }
 
