@@ -1,5 +1,7 @@
 2.0.12:
  * Pig: Remove errant LIMIT clause in CqlNativeStorage (CASSANDRA-8166)
+ * Allow concurrent writing of the same table in the same JVM using
+   CQLSSTableWriter (CASSANDRA-7463)
 
 
 2.0.11:
