@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.config;
 
-import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,7 +30,7 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.utils.ConcurrentBiMap;
@@ -130,6 +129,17 @@ public class Schema
         return keyspaceInstances.get(keyspaceName);
     }
 
+    public ColumnFamilyStore getColumnFamilyStoreInstance(UUID cfId)
+    {
+        Pair<String, String> pair = cfIdMap.inverse().get(cfId);
+        if (pair == null)
+            return null;
+        Keyspace instance = getKeyspaceInstance(pair.left);
+        if (instance == null)
+            return null;
+        return instance.getColumnFamilyStore(cfId);
+    }
+
     /**
      * Store given Keyspace instance to the schema
      *
@@ -218,23 +228,6 @@ public class Schema
     }
 
     /**
-     * Get column comparator for ColumnFamily but it's keyspace/name
-     *
-     * @param ksName The keyspace name
-     * @param cfName The ColumnFamily name
-     *
-     * @return The comparator of the ColumnFamily
-     */
-    public AbstractType<?> getComparator(String ksName, String cfName)
-    {
-        assert ksName != null;
-        CFMetaData cfmd = getCFMetaData(ksName, cfName);
-        if (cfmd == null)
-            throw new IllegalArgumentException("Unknown ColumnFamily " + cfName + " in keyspace " + ksName);
-        return cfmd.comparator;
-    }
-
-    /**
      * Get metadata about keyspace by its name
      *
      * @param keyspaceName The name of the keyspace
@@ -309,6 +302,15 @@ public class Schema
     }
 
     /**
+     * @param cfId The identifier of the ColumnFamily to lookup
+     * @return true if the CF id is a known one, false otherwise.
+     */
+    public boolean hasCF(UUID cfId)
+    {
+        return cfIdMap.containsValue(cfId);
+    }
+
+    /**
      * Lookup keyspace/ColumnFamily identifier
      *
      * @param ksName The keyspace name
@@ -346,6 +348,7 @@ public class Schema
     public void purge(CFMetaData cfm)
     {
         cfIdMap.remove(Pair.create(cfm.ksName, cfm.cfName));
+        cfm.markPurged();
     }
 
     /* Version control */
@@ -374,9 +377,8 @@ public class Schema
                     continue;
 
                 // we want to digest only live columns
-                ColumnFamilyStore.removeDeletedColumnsOnly(row.cf, Integer.MAX_VALUE);
+                ColumnFamilyStore.removeDeletedColumnsOnly(row.cf, Integer.MAX_VALUE, SecondaryIndexManager.nullUpdater);
                 row.cf.purgeTombstones(Integer.MAX_VALUE);
-                
                 row.cf.updateDigest(versionDigest);
             }
 
@@ -416,14 +418,14 @@ public class Schema
 
     public static boolean invalidSchemaRow(Row row)
     {
-        return row.cf == null || (row.cf.isMarkedForDelete() && row.cf.getColumnCount() == 0);
+        return row.cf == null || (row.cf.isMarkedForDelete() && !row.cf.hasColumns());
     }
 
     public static boolean ignoredSchemaRow(Row row)
     {
         try
         {
-            return systemKeyspaceNames.contains(ByteBufferUtil.string(row.key.key));
+            return systemKeyspaceNames.contains(ByteBufferUtil.string(row.key.getKey()));
         }
         catch (CharacterCodingException e)
         {

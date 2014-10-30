@@ -23,6 +23,7 @@ import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.transport.messages.ResultMessage;
 
 /**
@@ -62,7 +63,7 @@ public abstract class SchemaAlteringStatement extends CFStatement implements CQL
         return new Prepared(this);
     }
 
-    public abstract ResultMessage.SchemaChange.Change changeType();
+    public abstract Event.SchemaChange changeEvent();
 
     /**
      * Announces the migration to other nodes in the cluster.
@@ -70,23 +71,26 @@ public abstract class SchemaAlteringStatement extends CFStatement implements CQL
      * is used, for example)
      * @throws RequestValidationException
      */
-    public abstract boolean announceMigration() throws RequestValidationException;
+    public abstract boolean announceMigration(boolean isLocalOnly) throws RequestValidationException;
 
     public ResultMessage execute(QueryState state, QueryOptions options) throws RequestValidationException
     {
         // If an IF [NOT] EXISTS clause was used, this may not result in an actual schema change.  To avoid doing
         // extra work in the drivers to handle schema changes, we return an empty message in this case. (CASSANDRA-7600)
-        boolean didChangeSchema = announceMigration();
-        if (!didChangeSchema)
-            return new ResultMessage.Void();
-
-        String tableName = cfName == null || columnFamily() == null ? "" : columnFamily();
-        return new ResultMessage.SchemaChange(changeType(), keyspace(), tableName);
+        boolean didChangeSchema = announceMigration(false);
+        return didChangeSchema ? new ResultMessage.SchemaChange(changeEvent()) : new ResultMessage.Void();
     }
 
     public ResultMessage executeInternal(QueryState state, QueryOptions options)
     {
-        // executeInternal is for local query only, thus altering schema is not supported
-        throw new UnsupportedOperationException();
+        try
+        {
+            boolean didChangeSchema = announceMigration(true);
+            return didChangeSchema ? new ResultMessage.SchemaChange(changeEvent()) : new ResultMessage.Void();
+        }
+        catch (RequestValidationException e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 }

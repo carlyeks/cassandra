@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.db.compaction;
 
-import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -31,12 +30,12 @@ import com.google.common.collect.Iterators;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.io.sstable.ColumnNameHelper;
 import org.apache.cassandra.io.sstable.ColumnStats;
 import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.io.sstable.SSTableWriter;
 import org.apache.cassandra.io.util.DataOutputBuffer;
+import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.utils.MergeIterator;
 import org.apache.cassandra.utils.StreamingHistogram;
 
@@ -47,17 +46,18 @@ import org.apache.cassandra.utils.StreamingHistogram;
  * in memory at a time is the bloom filter, the index, and one column from each
  * pre-compaction row.
  */
-public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable<OnDiskAtom>
+public class LazilyCompactedRow extends AbstractCompactedRow
 {
     private final List<? extends OnDiskAtomIterator> rows;
     private final CompactionController controller;
-    private final boolean shouldPurge;
+    private final long maxPurgeableTimestamp;
     private final ColumnFamily emptyColumnFamily;
-    private Reducer reducer;
     private ColumnStats columnStats;
     private boolean closed;
     private ColumnIndex.Builder indexBuilder;
     private final SecondaryIndexManager.Updater indexer;
+    private final Reducer reducer;
+    private final Iterator<OnDiskAtom> merger;
     private DeletionTime maxRowTombstone;
 
     public LazilyCompactedRow(CompactionController controller, List<? extends OnDiskAtomIterator> rows)
@@ -65,7 +65,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         super(rows.get(0).getKey());
         this.rows = rows;
         this.controller = controller;
-        indexer = controller.cfs.indexManager.updaterFor(key);
+        indexer = controller.cfs.indexManager.gcUpdaterFor(key);
 
         // Combine top-level tombstones, keeping the one with the highest markedForDeleteAt timestamp.  This may be
         // purged (depending on gcBefore), but we need to remember it to properly delete columns during the merge
@@ -77,28 +77,37 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
                 maxRowTombstone = rowTombstone;
         }
 
+        // tombstones with a localDeletionTime before this can be purged.  This is the minimum timestamp for any sstable
+        // containing `key` outside of the set of sstables involved in this compaction.
+        maxPurgeableTimestamp = controller.maxPurgeableTimestamp(key);
 
-        // Don't pass maxTombstoneTimestamp to shouldPurge since we might well have cells with
-        // tombstones newer than the row-level tombstones we've seen -- but we won't know that
-        // until we iterate over them.  By passing MAX_VALUE we will only purge if there are
-        // no other versions of this row present.
-        this.shouldPurge = controller.shouldPurge(key, Long.MAX_VALUE);
-
-        emptyColumnFamily = EmptyColumns.factory.create(controller.cfs.metadata);
+        emptyColumnFamily = ArrayBackedSortedColumns.factory.create(controller.cfs.metadata);
         emptyColumnFamily.delete(maxRowTombstone);
-        if (shouldPurge)
+        if (maxRowTombstone.markedForDeleteAt < maxPurgeableTimestamp)
             emptyColumnFamily.purgeTombstones(controller.gcBefore);
+
+        reducer = new Reducer();
+        merger = Iterators.filter(MergeIterator.get(rows, emptyColumnFamily.getComparator().onDiskAtomComparator(), reducer), Predicates.notNull());
     }
 
-    public RowIndexEntry write(long currentPosition, DataOutput out) throws IOException
+    private static void removeDeleted(ColumnFamily cf, boolean shouldPurge, DecoratedKey key, CompactionController controller)
+    {
+        // We should only purge cell tombstones if shouldPurge is true, but regardless, it's still ok to remove cells that
+        // are shadowed by a row or range tombstone; removeDeletedColumnsOnly(cf, Integer.MIN_VALUE) will accomplish this
+        // without purging tombstones.
+        int overriddenGCBefore = shouldPurge ? controller.gcBefore : Integer.MIN_VALUE;
+        ColumnFamilyStore.removeDeletedColumnsOnly(cf, overriddenGCBefore, controller.cfs.indexManager.gcUpdaterFor(key));
+    }
+
+    public RowIndexEntry write(long currentPosition, DataOutputPlus out) throws IOException
     {
         assert !closed;
 
         ColumnIndex columnsIndex;
         try
         {
-            indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, out);
-            columnsIndex = indexBuilder.buildForCompaction(iterator());
+            indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.getKey(), out);
+            columnsIndex = indexBuilder.buildForCompaction(merger);
 
             // if there aren't any columns or tombstones, return null
             if (columnsIndex.columnsIndex.isEmpty() && !emptyColumnFamily.isMarkedForDelete())
@@ -109,16 +118,14 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
             throw new RuntimeException(e);
         }
         // reach into the reducer (created during iteration) to get column count, size, max column timestamp
-        // (however, if there are zero columns, iterator() will not be called by ColumnIndexer and reducer will be null)
-        columnStats = new ColumnStats(reducer == null ? 0 : reducer.columns,
-                                      reducer == null ? Long.MAX_VALUE : reducer.minTimestampTracker.get(),
-                                      reducer == null ? emptyColumnFamily.maxTimestamp() : Math.max(emptyColumnFamily.maxTimestamp(), reducer.maxTimestampTracker.get()),
-                                      reducer == null ? Integer.MIN_VALUE : reducer.maxDeletionTimeTracker.get(),
-                                      reducer == null ? new StreamingHistogram(SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE) : reducer.tombstones,
-                                      reducer == null ? Collections.<ByteBuffer>emptyList() : reducer.minColumnNameSeen,
-                                      reducer == null ? Collections.<ByteBuffer>emptyList() : reducer.maxColumnNameSeen
-        );
-        reducer = null;
+        columnStats = new ColumnStats(reducer.columns,
+                                      reducer.minTimestampTracker.get(),
+                                      Math.max(emptyColumnFamily.deletionInfo().maxTimestamp(), reducer.maxTimestampTracker.get()),
+                                      reducer.maxDeletionTimeTracker.get(),
+                                      reducer.tombstones,
+                                      reducer.minColumnNameSeen,
+                                      reducer.maxColumnNameSeen,
+                                      reducer.hasLegacyCounterShards);
 
         // in case no columns were ever written, we may still need to write an empty header with a top-level tombstone
         indexBuilder.maybeWriteEmptyRowHeader();
@@ -149,23 +156,10 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         }
 
         // initialize indexBuilder for the benefit of its tombstoneTracker, used by our reducing iterator
-        indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.key, out);
-        Iterator<OnDiskAtom> iter = iterator();
-        while (iter.hasNext())
-            iter.next().updateDigest(digest);
+        indexBuilder = new ColumnIndex.Builder(emptyColumnFamily, key.getKey(), out);
+        while (merger.hasNext())
+            merger.next().updateDigest(digest);
         close();
-    }
-
-    public AbstractType<?> getComparator()
-    {
-        return emptyColumnFamily.getComparator();
-    }
-
-    public Iterator<OnDiskAtom> iterator()
-    {
-        reducer = new Reducer();
-        Iterator<OnDiskAtom> iter = MergeIterator.get(rows, getComparator().onDiskAtomComparator, reducer);
-        return Iterators.filter(iter, Predicates.notNull());
     }
 
     public ColumnStats columnStats()
@@ -204,15 +198,16 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         // if the row tombstone is 'live' we need to set timestamp to MAX_VALUE to be able to overwrite it later
         // markedForDeleteAt is MIN_VALUE for 'live' row tombstones (which we use to default maxTimestampSeen)
 
-        ColumnStats.MinTracker<Long> minTimestampTracker = new ColumnStats.MinTracker<>(Long.MIN_VALUE);
-        ColumnStats.MaxTracker<Long> maxTimestampTracker = new ColumnStats.MaxTracker<>(Long.MAX_VALUE);
+        ColumnStats.MinLongTracker minTimestampTracker = new ColumnStats.MinLongTracker(Long.MIN_VALUE);
+        ColumnStats.MaxLongTracker maxTimestampTracker = new ColumnStats.MaxLongTracker(Long.MAX_VALUE);
         // we need to set MIN_VALUE if we are 'live' since we want to overwrite it later
         // we are bound to have either a RangeTombstone or standard cells will set this properly:
-        ColumnStats.MaxTracker<Integer> maxDeletionTimeTracker = new ColumnStats.MaxTracker<>(Integer.MAX_VALUE);
+        ColumnStats.MaxIntTracker maxDeletionTimeTracker = new ColumnStats.MaxIntTracker(Integer.MAX_VALUE);
 
         StreamingHistogram tombstones = new StreamingHistogram(SSTable.TOMBSTONE_HISTOGRAM_BIN_SIZE);
         List<ByteBuffer> minColumnNameSeen = Collections.emptyList();
         List<ByteBuffer> maxColumnNameSeen = Collections.emptyList();
+        boolean hasLegacyCounterShards = false;
 
         public Reducer()
         {
@@ -229,23 +224,20 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
         {
             if (current instanceof RangeTombstone)
             {
-                if (tombstone == null || current.maxTimestamp() >= tombstone.maxTimestamp())
+                if (tombstone == null || current.timestamp() >= tombstone.timestamp())
                     tombstone = (RangeTombstone)current;
             }
             else
             {
-                Column column = (Column) current;
-                container.addColumn(column);
+                Cell cell = (Cell) current;
+                container.addColumn(cell);
 
                 // skip the index-update checks if there is no indexing needed since they are a bit expensive
                 if (indexer == SecondaryIndexManager.nullUpdater)
                     return;
 
-                if (!column.isMarkedForDelete(System.currentTimeMillis())
-                    && !container.getColumn(column.name()).equals(column))
-                {
-                    indexer.remove(column);
-                }
+                if (cell.isLive() && !container.getColumn(cell.name()).equals(cell))
+                    indexer.remove(cell);
             }
         }
 
@@ -259,7 +251,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
                 RangeTombstone t = tombstone;
                 tombstone = null;
 
-                if (shouldPurge && t.data.isGcAble(controller.gcBefore))
+                if (t.timestamp() < maxPurgeableTimestamp && t.data.isGcAble(controller.gcBefore))
                 {
                     indexBuilder.tombstoneTracker().update(t, true);
                     return null;
@@ -267,51 +259,57 @@ public class LazilyCompactedRow extends AbstractCompactedRow implements Iterable
                 else
                 {
                     tombstones.update(t.getLocalDeletionTime());
-                    minTimestampTracker.update(t.minTimestamp());
-                    maxTimestampTracker.update(t.maxTimestamp());
+                    minTimestampTracker.update(t.timestamp());
+                    maxTimestampTracker.update(t.timestamp());
                     maxDeletionTimeTracker.update(t.getLocalDeletionTime());
                     minColumnNameSeen = ColumnNameHelper.minComponents(minColumnNameSeen, t.min, controller.cfs.metadata.comparator);
                     maxColumnNameSeen = ColumnNameHelper.maxComponents(maxColumnNameSeen, t.max, controller.cfs.metadata.comparator);
-
                     return t;
                 }
             }
             else
             {
+                boolean shouldPurge = container.getSortedColumns().iterator().next().timestamp() < maxPurgeableTimestamp;
                 // when we clear() the container, it removes the deletion info, so this needs to be reset each time
                 container.delete(maxRowTombstone);
-                ColumnFamily purged = PrecompactedRow.removeDeleted(key, shouldPurge, controller, container);
-                if (purged == null || !purged.iterator().hasNext())
+                removeDeleted(container, shouldPurge, key, controller);
+                Iterator<Cell> iter = container.iterator();
+                if (!iter.hasNext())
                 {
                     // don't call clear() because that resets the deletion time. See CASSANDRA-7808.
-                    container = ArrayBackedSortedColumns.factory.create(emptyColumnFamily.metadata());;
+                    container = ArrayBackedSortedColumns.factory.create(emptyColumnFamily.metadata());
                     return null;
                 }
-                Column reduced = purged.iterator().next();
+
+                int localDeletionTime = container.deletionInfo().getTopLevelDeletion().localDeletionTime;
+                if (localDeletionTime < Integer.MAX_VALUE)
+                    tombstones.update(localDeletionTime);
+
+                Cell reduced = iter.next();
                 container = ArrayBackedSortedColumns.factory.create(emptyColumnFamily.metadata());
 
-                // PrecompactedRow.removeDeleted has only checked the top-level CF deletion times,
-                // not the range tombstones. For that we use the columnIndexer tombstone tracker.
+                // removeDeleted have only checked the top-level CF deletion times,
+                // not the range tombstone. For that we use the columnIndexer tombstone tracker.
                 if (indexBuilder.tombstoneTracker().isDeleted(reduced))
                 {
                     indexer.remove(reduced);
                     return null;
                 }
-                int localDeletionTime = purged.deletionInfo().getTopLevelDeletion().localDeletionTime;
-                if (localDeletionTime < Integer.MAX_VALUE)
-                    tombstones.update(localDeletionTime);
+
                 columns++;
-                minTimestampTracker.update(reduced.minTimestamp());
-                maxTimestampTracker.update(reduced.maxTimestamp());
+                minTimestampTracker.update(reduced.timestamp());
+                maxTimestampTracker.update(reduced.timestamp());
                 maxDeletionTimeTracker.update(reduced.getLocalDeletionTime());
                 minColumnNameSeen = ColumnNameHelper.minComponents(minColumnNameSeen, reduced.name(), controller.cfs.metadata.comparator);
                 maxColumnNameSeen = ColumnNameHelper.maxComponents(maxColumnNameSeen, reduced.name(), controller.cfs.metadata.comparator);
 
                 int deletionTime = reduced.getLocalDeletionTime();
                 if (deletionTime < Integer.MAX_VALUE)
-                {
                     tombstones.update(deletionTime);
-                }
+
+                if (reduced instanceof CounterCell)
+                    hasLegacyCounterShards = hasLegacyCounterShards || ((CounterCell) reduced).hasLegacyShards();
+
                 return reduced;
             }
         }

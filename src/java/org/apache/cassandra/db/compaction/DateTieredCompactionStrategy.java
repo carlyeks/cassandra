@@ -59,7 +59,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
                 return null;
 
             if (cfs.getDataTracker().markCompacting(latestBucket))
-                return new CompactionTask(cfs, latestBucket, gcBefore);
+                return new CompactionTask(cfs, latestBucket, gcBefore, false);
         }
     }
 
@@ -75,12 +75,37 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
 
         int base = cfs.getMinimumCompactionThreshold();
         long now = getNow();
-
         Iterable<SSTableReader> candidates = filterSuspectSSTables(cfs.getUncompactingSSTables());
 
-        List<SSTableReader> mostInteresting = getCompactionCandidates(candidates, now, base);
-        if (mostInteresting != null)
-            return mostInteresting;
+        Set<SSTableReader> repairedCandidates = new HashSet<>();
+        Set<SSTableReader> unRepairedCandidates = new HashSet<>();
+        for (SSTableReader sstable : candidates)
+        {
+            if (sstable.isRepaired())
+            {
+                repairedCandidates.add(sstable);
+            }
+            else
+            {
+                unRepairedCandidates.add(sstable);
+            }
+        }
+
+
+        List<SSTableReader> mostInterestingRepaired = getCompactionCandidates(repairedCandidates, now, base);
+        List<SSTableReader> mostInterestingUnrepaired = getCompactionCandidates(unRepairedCandidates, now, base);
+        if (mostInterestingRepaired != null && mostInterestingUnrepaired != null)
+        {
+            return mostInterestingRepaired.size() > mostInterestingUnrepaired.size() ? mostInterestingRepaired : mostInterestingUnrepaired;
+        }
+        else if (mostInterestingRepaired != null)
+        {
+            return mostInterestingRepaired;
+        }
+        else if (mostInterestingUnrepaired != null)
+        {
+            return mostInterestingUnrepaired;
+        }
 
         // if there is no sstable to compact in standard way, try compacting single sstable whose droppable tombstone
         // ratio is greater than threshold.
@@ -320,13 +345,13 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
     }
 
     @Override
-    public synchronized AbstractCompactionTask getMaximalTask(int gcBefore)
+    public synchronized Collection<AbstractCompactionTask> getMaximalTask(int gcBefore)
     {
         Iterable<SSTableReader> sstables = cfs.markAllCompacting();
         if (sstables == null)
             return null;
 
-        return new CompactionTask(cfs, sstables, gcBefore);
+        return Arrays.<AbstractCompactionTask>asList(new CompactionTask(cfs, sstables, gcBefore, false));
     }
 
     @Override
@@ -340,7 +365,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
             return null;
         }
 
-        return new CompactionTask(cfs, sstables, gcBefore).setUserDefined(true);
+        return new CompactionTask(cfs, sstables, gcBefore, false).setUserDefined(true);
     }
 
     public int getEstimatedRemainingTasks()

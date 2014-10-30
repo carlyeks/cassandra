@@ -30,7 +30,7 @@ import org.apache.cassandra.Util;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.RowMutation;
+import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -173,8 +173,8 @@ public class DateTieredCompactionStrategyTest extends SchemaLoader
         for (int r = 0; r < numSSTables; r++)
         {
             DecoratedKey key = Util.dk(String.valueOf(r));
-            RowMutation rm = new RowMutation(KEYSPACE1, key.key);
-            rm.add(CF_STANDARD1, ByteBufferUtil.bytes("column"), value, r);
+            Mutation rm = new Mutation(KEYSPACE1, key.getKey());
+            rm.add(CF_STANDARD1, Util.cellname("column"), value, r);
             rm.apply();
             cfs.forceBlockingFlush();
         }
@@ -217,8 +217,8 @@ public class DateTieredCompactionStrategyTest extends SchemaLoader
         for (int r = 0; r < numSSTables; r++)
         {
             DecoratedKey key = Util.dk(String.valueOf(r));
-            RowMutation rm = new RowMutation(KEYSPACE1, key.key);
-            rm.add(CF_STANDARD1, ByteBufferUtil.bytes("column"), value, r);
+            Mutation rm = new Mutation(KEYSPACE1, key.getKey());
+            rm.add(CF_STANDARD1, Util.cellname("column"), value, r);
             rm.apply();
             cfs.forceBlockingFlush();
         }

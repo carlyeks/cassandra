@@ -368,6 +368,11 @@ public class RandomAccessReader extends RandomAccessFile implements FileDataInpu
         return fileLength;
     }
 
+    public long getPosition()
+    {
+        return current;
+    }
+
     @Override
     public void write(int value)
     {

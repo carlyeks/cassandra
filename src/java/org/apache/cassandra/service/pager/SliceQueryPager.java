@@ -22,6 +22,8 @@ import java.util.Collections;
 import java.util.List;
 
 import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.composites.CellName;
+import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.filter.SliceQueryFilter;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
@@ -38,7 +40,7 @@ public class SliceQueryPager extends AbstractQueryPager implements SinglePartiti
 
     private final SliceFromReadCommand command;
 
-    private volatile ByteBuffer lastReturned;
+    private volatile Composite lastReturned;
 
     // Don't use directly, use QueryPagers method instead
     SliceQueryPager(SliceFromReadCommand command, ConsistencyLevel consistencyLevel, boolean localQuery)
@@ -53,7 +55,7 @@ public class SliceQueryPager extends AbstractQueryPager implements SinglePartiti
 
         if (state != null)
         {
-            lastReturned = state.cellName;
+            lastReturned = cfm.comparator.fromByteBuffer(state.cellName);
             restoreState(state.remaining, true);
         }
     }
@@ -67,7 +69,7 @@ public class SliceQueryPager extends AbstractQueryPager implements SinglePartiti
     {
         return lastReturned == null
              ? null
-             : new PagingState(null, lastReturned, maxRemaining());
+             : new PagingState(null, lastReturned.toByteBuffer(), maxRemaining());
     }
 
     protected List<Row> queryNextPage(int pageSize, ConsistencyLevel consistencyLevel, boolean localQuery)
@@ -92,18 +94,18 @@ public class SliceQueryPager extends AbstractQueryPager implements SinglePartiti
         if (lastReturned == null)
             return false;
 
-        Column firstColumn = isReversed() ? lastColumn(first.cf) : firstColumn(first.cf);
+        Cell firstCell = isReversed() ? lastCell(first.cf) : firstCell(first.cf);
         // Note: we only return true if the column is the lastReturned *and* it is live. If it is deleted, it is ignored by the
         // rest of the paging code (it hasn't been counted as live in particular) and we want to act as if it wasn't there.
-        return !first.cf.deletionInfo().isDeleted(firstColumn)
-            && firstColumn.isLive(timestamp())
-            && lastReturned.equals(firstColumn.name());
+        return !first.cf.deletionInfo().isDeleted(firstCell)
+            && firstCell.isLive(timestamp())
+            && lastReturned.equals(firstCell.name());
     }
 
     protected boolean recordLast(Row last)
     {
-        Column lastColumn = isReversed() ? firstColumn(last.cf) : lastColumn(last.cf);
-        lastReturned = lastColumn.name();
+        Cell lastCell = isReversed() ? firstCell(last.cf) : lastCell(last.cf);
+        lastReturned = lastCell.name();
         return true;
     }
 

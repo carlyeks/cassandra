@@ -52,6 +52,7 @@ VALUES (4, blobAsInt(0x), '', blobAsBigint(0x), 0x, blobAsBoolean(0x), blobAsDec
         blobAsVarint(0x));
 
 
+
 CREATE TABLE empty_table (
     lonelykey float primary key,
     lonelycol text
@@ -180,3 +181,77 @@ INSERT INTO twenty_rows_composite_table (a, b, c) VALUES ('A', '17', '17');
 INSERT INTO twenty_rows_composite_table (a, b, c) VALUES ('A', '18', '18');
 INSERT INTO twenty_rows_composite_table (a, b, c) VALUES ('A', '19', '19');
 INSERT INTO twenty_rows_composite_table (a, b, c) VALUES ('A', '20', '20');
+
+CREATE TYPE address (
+    city text,
+    address text,
+    zip text
+);
+
+CREATE TYPE phone_number (
+    country text,
+    number text
+);
+
+CREATE TABLE users (
+    login text PRIMARY KEY,
+    name text,
+    addresses set<frozen<address>>,
+    phone_numbers set<frozen<phone_number>>
+);
+
+insert into users (login, name, addresses, phone_numbers)
+values ('jbellis',
+        'jonathan ellis',
+        {{city: 'Austin', address: '902 East 5th St. #202', zip: '78702'},
+         {city: 'Sunnyvale', address: '292 Gibraltar Drive #107', zip: '94089'}},
+        {{country: '+44', number: '208 622 3021'},
+         {country: '+1', number: '512-537-7809'}});
+
+insert into users (login, name, addresses, phone_numbers)
+values ('vpupkin',
+        'vasya pupkin',
+        {{city: 'Chelyabinsk', address: '3rd street', zip: null},
+         {city: 'Chigirinsk', address: null, zip: '676722'}},
+        {{country: '+7', number: null},
+         {country: null, number: '03'}});
+
+CREATE TYPE band_info_type (
+  founded varint,
+  members set<text>,
+  description text
+);
+
+CREATE TYPE tags (
+  tags map<text, text>
+);
+
+CREATE TABLE songs (
+    title text PRIMARY KEY,
+    band text,
+    info frozen<band_info_type>,
+    tags frozen<tags>
+);
+
+insert into songs (title, band, info, tags)
+values (
+    'The trooper',
+    'Iron Maiden',
+    {
+        founded:188694000,
+        members: {
+            'Bruce Dickinson',
+            'Dave Murray',
+            'Adrian Smith',
+            'Janick Gers',
+            'Steve Harris',
+            'Nicko McBrain'
+        },
+        description: 'Pure evil metal'
+     },
+    {
+        tags: {
+            'genre':'metal',
+            'origin':'england'
+        }
+    });

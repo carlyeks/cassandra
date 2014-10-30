@@ -47,22 +47,30 @@ public class ListSerializer<T> extends CollectionSerializer<List<T>>
         this.elements = elements;
     }
 
-    public List<T> deserialize(ByteBuffer bytes)
+    public List<ByteBuffer> serializeValues(List<T> values)
+    {
+        List<ByteBuffer> buffers = new ArrayList<>(values.size());
+        for (T value : values)
+            buffers.add(elements.serialize(value));
+        return buffers;
+    }
+
+    public int getElementCount(List<T> value)
+    {
+        return value.size();
+    }
+
+    public void validateForNativeProtocol(ByteBuffer bytes, int version)
     {
         try
         {
             ByteBuffer input = bytes.duplicate();
-            int n = ByteBufferUtil.readShortLength(input);
-            List<T> l = new ArrayList<T>(n);
+            int n = readCollectionSize(input, version);
             for (int i = 0; i < n; i++)
-            {
-                ByteBuffer databb = ByteBufferUtil.readBytesWithShortLength(input);
-                elements.validate(databb);
-                l.add(elements.deserialize(databb));
-            }
+                elements.validate(readValue(input, version));
+
             if (input.hasRemaining())
                 throw new MarshalException("Unexpected extraneous bytes after list value");
-            return l;
         }
         catch (BufferUnderflowException e)
         {
@@ -70,24 +78,37 @@ public class ListSerializer<T> extends CollectionSerializer<List<T>>
         }
     }
 
-    /**
-     * Layout is: {@code <n><s_1><b_1>...<s_n><b_n> }
-     * where:
-     *   n is the number of elements
-     *   s_i is the number of bytes composing the ith element
-     *   b_i is the s_i bytes composing the ith element
-     */
-    public ByteBuffer serialize(List<T> value)
+    public List<T> deserializeForNativeProtocol(ByteBuffer bytes, int version)
     {
-        List<ByteBuffer> bbs = new ArrayList<ByteBuffer>(value.size());
-        int size = 0;
-        for (T elt : value)
+        try
         {
-            ByteBuffer bb = elements.serialize(elt);
-            bbs.add(bb);
-            size += 2 + bb.remaining();
+            ByteBuffer input = bytes.duplicate();
+            int n = readCollectionSize(input, version);
+            List<T> l = new ArrayList<T>(n);
+            for (int i = 0; i < n; i++)
+            {
+                // We can have nulls in lists that are used for IN values
+                ByteBuffer databb = readValue(input, version);
+                if (databb != null)
+                {
+                    elements.validate(databb);
+                    l.add(elements.deserialize(databb));
+                }
+                else
+                {
+                    l.add(null);
+                }
+            }
+
+            if (input.hasRemaining())
+                throw new MarshalException("Unexpected extraneous bytes after list value");
+
+            return l;
         }
-        return pack(bbs, value.size(), size);
+        catch (BufferUnderflowException e)
+        {
+            throw new MarshalException("Not enough bytes to read a list");
+        }
     }
 
     public String toString(List<T> value)

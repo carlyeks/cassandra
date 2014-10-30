@@ -50,6 +50,7 @@ import org.apache.cassandra.gms.GossipDigestAck;
 import org.apache.cassandra.gms.GossipDigestAck2;
 import org.apache.cassandra.gms.GossipDigestSyn;
 import org.apache.cassandra.io.IVersionedSerializer;
+import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.ILatencySubscriber;
 import org.apache.cassandra.metrics.ConnectionMetrics;
@@ -63,17 +64,17 @@ import org.apache.cassandra.service.paxos.PrepareResponse;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.*;
+import org.apache.cassandra.utils.concurrent.SimpleCondition;
 
 public final class MessagingService implements MessagingServiceMBean
 {
     public static final String MBEAN_NAME = "org.apache.cassandra.net:type=MessagingService";
 
     // 8 bits version, so don't waste versions
-    public static final int VERSION_12  = 6;
-    public static final int VERSION_20  = 7;
-    public static final int current_version = VERSION_20;
-
-    public boolean allNodesAtLeast20 = true;
+    public static final int VERSION_12 = 6;
+    public static final int VERSION_20 = 7;
+    public static final int VERSION_21 = 8;
+    public static final int current_version = VERSION_21;
 
     public static final String FAILURE_CALLBACK_PARAM = "CAL_BAC";
     public static final byte[] ONE_BYTE = new byte[1];
@@ -83,6 +84,8 @@ public final class MessagingService implements MessagingServiceMBean
      * we preface every message with this number so the recipient can validate the sender is sane
      */
     public static final int PROTOCOL_MAGIC = 0xCA552DFA;
+
+    private boolean allNodesAtLeast21 = true;
 
     /* All verb handler identifiers */
     public enum Verb
@@ -135,9 +138,9 @@ public final class MessagingService implements MessagingServiceMBean
     public static final EnumMap<MessagingService.Verb, Stage> verbStages = new EnumMap<MessagingService.Verb, Stage>(MessagingService.Verb.class)
     {{
         put(Verb.MUTATION, Stage.MUTATION);
+        put(Verb.COUNTER_MUTATION, Stage.COUNTER_MUTATION);
         put(Verb.READ_REPAIR, Stage.MUTATION);
         put(Verb.TRUNCATE, Stage.MUTATION);
-        put(Verb.COUNTER_MUTATION, Stage.MUTATION);
         put(Verb.PAXOS_PREPARE, Stage.MUTATION);
         put(Verb.PAXOS_PROPOSE, Stage.MUTATION);
         put(Verb.PAXOS_COMMIT, Stage.MUTATION);
@@ -193,8 +196,8 @@ public final class MessagingService implements MessagingServiceMBean
         put(Verb.REQUEST_RESPONSE, CallbackDeterminedSerializer.instance);
         put(Verb.INTERNAL_RESPONSE, CallbackDeterminedSerializer.instance);
 
-        put(Verb.MUTATION, RowMutation.serializer);
-        put(Verb.READ_REPAIR, RowMutation.serializer);
+        put(Verb.MUTATION, Mutation.serializer);
+        put(Verb.READ_REPAIR, Mutation.serializer);
         put(Verb.READ, ReadCommand.serializer);
         put(Verb.RANGE_SLICE, RangeSliceCommand.serializer);
         put(Verb.PAGED_RANGE, PagedRangeCommand.serializer);
@@ -253,7 +256,7 @@ public final class MessagingService implements MessagingServiceMBean
             throw new UnsupportedOperationException();
         }
 
-        public void serialize(Object o, DataOutput out, int version) throws IOException
+        public void serialize(Object o, DataOutputPlus out, int version) throws IOException
         {
             throw new UnsupportedOperationException();
         }
@@ -348,8 +351,9 @@ public final class MessagingService implements MessagingServiceMBean
 
                 if (expiredCallbackInfo.shouldHint())
                 {
-                    RowMutation rm = (RowMutation) ((WriteCallbackInfo) expiredCallbackInfo).sentMessage.payload;
-                    return StorageProxy.submitHint(rm, expiredCallbackInfo.target, null);
+                    Mutation mutation = (Mutation) ((WriteCallbackInfo) expiredCallbackInfo).sentMessage.payload;
+
+                    return StorageProxy.submitHint(mutation, expiredCallbackInfo.target, null);
                 }
 
                 return null;
@@ -393,7 +397,7 @@ public final class MessagingService implements MessagingServiceMBean
      */
     public void convict(InetAddress ep)
     {
-        logger.debug("Resetting pool for " + ep);
+        logger.debug("Resetting pool for {}", ep);
         getConnectionPool(ep).reset();
     }
 
@@ -567,6 +571,7 @@ public final class MessagingService implements MessagingServiceMBean
     {
         assert message.verb == Verb.MUTATION || message.verb == Verb.COUNTER_MUTATION;
         int messageId = nextId();
+
         CallbackInfo previous = callbacks.put(messageId,
                                               new WriteCallbackInfo(to,
                                                                     cb,
@@ -605,7 +610,6 @@ public final class MessagingService implements MessagingServiceMBean
      * @param cb      callback interface which is used to pass the responses or
      *                suggest that a timeout occurred to the invoker of the send().
      * @param timeout the timeout used for expiration
-     * @param failureCallback true if given cb has failure callback
      * @return an reference to message id used to match with the result
      */
     public int sendRR(MessageOut message, InetAddress to, IAsyncCallback cb, long timeout, boolean failureCallback)
@@ -772,19 +776,24 @@ public final class MessagingService implements MessagingServiceMBean
         return packed >>> (start + 1) - count & ~(-1 << count);
     }
 
+    public boolean areAllNodesAtLeast21()
+    {
+        return allNodesAtLeast21;
+    }
+
     /**
      * @return the last version associated with address, or @param version if this is the first such version
      */
     public int setVersion(InetAddress endpoint, int version)
     {
         logger.debug("Setting version {} for {}", version, endpoint);
-        if (version < VERSION_20)
-            allNodesAtLeast20 = false;
+        if (version < VERSION_21)
+            allNodesAtLeast21 = false;
         Integer v = versions.put(endpoint, version);
 
         // if the version was increased to 2.0 or later, see if all nodes are >= 2.0 now
-        if (v != null && v < VERSION_20 && version >= VERSION_20)
-            refreshAllNodesAtLeast20();
+        if (v != null && v < VERSION_21 && version >= VERSION_21)
+            refreshAllNodesAtLeast21();
 
         return v == null ? version : v;
     }
@@ -793,21 +802,21 @@ public final class MessagingService implements MessagingServiceMBean
     {
         logger.debug("Resetting version for {}", endpoint);
         Integer removed = versions.remove(endpoint);
-        if (removed != null && removed <= VERSION_20)
-            refreshAllNodesAtLeast20();
+        if (removed != null && removed <= VERSION_21)
+            refreshAllNodesAtLeast21();
     }
 
-    private void refreshAllNodesAtLeast20()
+    private void refreshAllNodesAtLeast21()
     {
         for (Integer version: versions.values())
         {
-            if (version < VERSION_20)
+            if (version < VERSION_21)
             {
-                allNodesAtLeast20 = false;
+                allNodesAtLeast21 = false;
                 return;
             }
         }
-        allNodesAtLeast20 = true;
+        allNodesAtLeast21 = true;
     }
 
     public int getVersion(InetAddress endpoint)
@@ -840,6 +849,7 @@ public final class MessagingService implements MessagingServiceMBean
     {
         return versions.containsKey(endpoint);
     }
+
 
     public void incrementDroppedMessages(Verb verb)
     {

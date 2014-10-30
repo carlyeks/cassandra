@@ -57,15 +57,16 @@ public class RowDataResolver extends AbstractRowResolver
     */
     public Row resolve() throws DigestMismatchException
     {
+        int replyCount = replies.size();
         if (logger.isDebugEnabled())
-            logger.debug("resolving " + replies.size() + " responses");
+            logger.debug("resolving {} responses", replyCount);
         long start = System.nanoTime();
 
         ColumnFamily resolved;
-        if (replies.size() > 1)
+        if (replyCount > 1)
         {
-            List<ColumnFamily> versions = new ArrayList<ColumnFamily>(replies.size());
-            List<InetAddress> endpoints = new ArrayList<InetAddress>(replies.size());
+            List<ColumnFamily> versions = new ArrayList<>(replyCount);
+            List<InetAddress> endpoints = new ArrayList<>(replyCount);
 
             for (MessageIn<ReadResponse> message : replies)
             {
@@ -115,13 +116,12 @@ public class RowDataResolver extends AbstractRowResolver
             if (diffCf == null) // no repair needs to happen
                 continue;
 
-            // create and send the row mutation message based on the diff
-            RowMutation rowMutation = new RowMutation(keyspaceName, key.key, diffCf);
-            MessageOut repairMessage;
+            // create and send the mutation message based on the diff
+            Mutation mutation = new Mutation(keyspaceName, key.getKey(), diffCf);
             // use a separate verb here because we don't want these to be get the white glove hint-
             // on-timeout behavior that a "real" mutation gets
-            repairMessage = rowMutation.createMessage(MessagingService.Verb.READ_REPAIR);
-            results.add(MessagingService.instance().sendRR(repairMessage, endpoints.get(i)));
+            results.add(MessagingService.instance().sendRR(mutation.createMessage(MessagingService.Verb.READ_REPAIR),
+                                                           endpoints.get(i)));
         }
 
         return results;
@@ -146,23 +146,21 @@ public class RowDataResolver extends AbstractRowResolver
             return null;
 
         // mimic the collectCollatedColumn + removeDeleted path that getColumnFamily takes.
-        // this will handle removing columns and subcolumns that are supressed by a row or
+        // this will handle removing columns and subcolumns that are suppressed by a row or
         // supercolumn tombstone.
         QueryFilter filter = new QueryFilter(null, resolved.metadata().cfName, new IdentityQueryFilter(), now);
-        List<CloseableIterator<Column>> iters = new ArrayList<CloseableIterator<Column>>();
+        List<CloseableIterator<Cell>> iters = new ArrayList<>(Iterables.size(versions));
         for (ColumnFamily version : versions)
-        {
-            if (version == null)
-                continue;
-            iters.add(FBUtilities.closeableIterator(version.iterator()));
-        }
+            if (version != null)
+                iters.add(FBUtilities.closeableIterator(version.iterator()));
         filter.collateColumns(resolved, iters, Integer.MIN_VALUE);
         return ColumnFamilyStore.removeDeleted(resolved, Integer.MIN_VALUE);
     }
 
     public Row getData()
     {
-        return replies.iterator().next().payload.row();
+        assert !replies.isEmpty();
+        return replies.peek().payload.row();
     }
 
     public boolean isDataPresent()

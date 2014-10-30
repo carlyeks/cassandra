@@ -38,6 +38,9 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.commitlog.CommitLogDescriptor;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
+import org.apache.cassandra.db.commitlog.CommitLogSegment;
+import org.apache.cassandra.db.composites.CellName;
+import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.filter.NamesQueryFilter;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.StorageService;
@@ -108,8 +111,8 @@ public class CommitLogTest extends SchemaLoader
     {
         CommitLog.instance.resetUnsafe();
         // Roughly 32 MB mutation
-        RowMutation rm = new RowMutation("Keyspace1", bytes("k"));
-        rm.add("Standard1", bytes("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize()/4), 0);
+        Mutation rm = new Mutation("Keyspace1", bytes("k"));
+        rm.add("Standard1", Util.cellname("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize()/4), 0);
 
         // Adding it 5 times
         CommitLog.instance.add(rm);
@@ -119,14 +122,14 @@ public class CommitLogTest extends SchemaLoader
         CommitLog.instance.add(rm);
 
         // Adding new mutation on another CF
-        RowMutation rm2 = new RowMutation("Keyspace1", bytes("k"));
-        rm2.add("Standard2", bytes("c1"), ByteBuffer.allocate(4), 0);
+        Mutation rm2 = new Mutation("Keyspace1", bytes("k"));
+        rm2.add("Standard2", Util.cellname("c1"), ByteBuffer.allocate(4), 0);
         CommitLog.instance.add(rm2);
 
         assert CommitLog.instance.activeSegments() == 2 : "Expecting 2 segments, got " + CommitLog.instance.activeSegments();
 
         UUID cfid2 = rm2.getColumnFamilyIds().iterator().next();
-        CommitLog.instance.discardCompletedSegments(cfid2, CommitLog.instance.getContext().get());
+        CommitLog.instance.discardCompletedSegments(cfid2, CommitLog.instance.getContext());
 
         // Assert we still have both our segment
         assert CommitLog.instance.activeSegments() == 2 : "Expecting 2 segments, got " + CommitLog.instance.activeSegments();
@@ -135,10 +138,11 @@ public class CommitLogTest extends SchemaLoader
     @Test
     public void testDeleteIfNotDirty() throws Exception
     {
+        DatabaseDescriptor.getCommitLogSegmentSize();
         CommitLog.instance.resetUnsafe();
         // Roughly 32 MB mutation
-        RowMutation rm = new RowMutation("Keyspace1", bytes("k"));
-        rm.add("Standard1", bytes("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize()/4), 0);
+        Mutation rm = new Mutation("Keyspace1", bytes("k"));
+        rm.add("Standard1", Util.cellname("c1"), ByteBuffer.allocate((DatabaseDescriptor.getCommitLogSegmentSize()/4) - 1), 0);
 
         // Adding it twice (won't change segment)
         CommitLog.instance.add(rm);
@@ -148,15 +152,17 @@ public class CommitLogTest extends SchemaLoader
 
         // "Flush": this won't delete anything
         UUID cfid1 = rm.getColumnFamilyIds().iterator().next();
-        CommitLog.instance.discardCompletedSegments(cfid1, CommitLog.instance.getContext().get());
+        CommitLog.instance.sync(true);
+        CommitLog.instance.discardCompletedSegments(cfid1, CommitLog.instance.getContext());
 
         assert CommitLog.instance.activeSegments() == 1 : "Expecting 1 segment, got " + CommitLog.instance.activeSegments();
 
         // Adding new mutation on another CF, large enough (including CL entry overhead) that a new segment is created
-        RowMutation rm2 = new RowMutation("Keyspace1", bytes("k"));
-        rm2.add("Standard2", bytes("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize()/2), 0);
+        Mutation rm2 = new Mutation("Keyspace1", bytes("k"));
+        rm2.add("Standard2", Util.cellname("c1"), ByteBuffer.allocate((DatabaseDescriptor.getCommitLogSegmentSize()/2) - 100), 0);
         CommitLog.instance.add(rm2);
-        // also forces a new segment, since each entry-with-overhead is just over half the CL size
+        // also forces a new segment, since each entry-with-overhead is just under half the CL size
+        CommitLog.instance.add(rm2);
         CommitLog.instance.add(rm2);
 
         assert CommitLog.instance.activeSegments() == 3 : "Expecting 3 segments, got " + CommitLog.instance.activeSegments();
@@ -166,21 +172,53 @@ public class CommitLogTest extends SchemaLoader
         // didn't write anything on cf1 since last flush (and we flush cf2)
 
         UUID cfid2 = rm2.getColumnFamilyIds().iterator().next();
-        CommitLog.instance.discardCompletedSegments(cfid2, CommitLog.instance.getContext().get());
+        CommitLog.instance.discardCompletedSegments(cfid2, CommitLog.instance.getContext());
 
         // Assert we still have both our segment
         assert CommitLog.instance.activeSegments() == 1 : "Expecting 1 segment, got " + CommitLog.instance.activeSegments();
     }
 
+    private static int getMaxRecordDataSize(String keyspace, ByteBuffer key, String table, CellName column)
+    {
+        Mutation rm = new Mutation("Keyspace1", bytes("k"));
+        rm.add("Standard1", Util.cellname("c1"), ByteBuffer.allocate(0), 0);
+
+        int max = (DatabaseDescriptor.getCommitLogSegmentSize() / 2);
+        max -= CommitLogSegment.ENTRY_OVERHEAD_SIZE; // log entry overhead
+        return max - (int) Mutation.serializer.serializedSize(rm, MessagingService.current_version);
+    }
+
+    private static int getMaxRecordDataSize()
+    {
+        return getMaxRecordDataSize("Keyspace1", bytes("k"), "Standard1", Util.cellname("c1"));
+    }
+
     // CASSANDRA-3615
     @Test
-    public void testExceedSegmentSizeWithOverhead() throws Exception
+    public void testEqualRecordLimit() throws Exception
     {
         CommitLog.instance.resetUnsafe();
 
-        RowMutation rm = new RowMutation("Keyspace1", bytes("k"));
-        rm.add("Standard1", bytes("c1"), ByteBuffer.allocate((DatabaseDescriptor.getCommitLogSegmentSize()) - 83), 0);
+        Mutation rm = new Mutation("Keyspace1", bytes("k"));
+        rm.add("Standard1", Util.cellname("c1"), ByteBuffer.allocate(getMaxRecordDataSize()), 0);
         CommitLog.instance.add(rm);
+    }
+
+    @Test
+    public void testExceedRecordLimit() throws Exception
+    {
+        CommitLog.instance.resetUnsafe();
+        try
+        {
+            Mutation rm = new Mutation("Keyspace1", bytes("k"));
+            rm.add("Standard1", Util.cellname("c1"), ByteBuffer.allocate(1 + getMaxRecordDataSize()), 0);
+            CommitLog.instance.add(rm);
+            throw new AssertionError("mutation larger than limit was accepted");
+        }
+        catch (IllegalArgumentException e)
+        {
+            // IAE is thrown on too-large mutations
+        }
     }
 
     protected void testRecoveryWithBadSizeArgument(int size, int dataSize) throws Exception
@@ -246,8 +284,8 @@ public class CommitLogTest extends SchemaLoader
 
             DatabaseDescriptor.setCommitFailurePolicy(Config.CommitFailurePolicy.stop);
             commitDir.setWritable(false);
-            RowMutation rm = new RowMutation("Keyspace1", bytes("k"));
-            rm.add("Standard1", bytes("c1"), ByteBuffer.allocate(100), 0);
+            Mutation rm = new Mutation("Keyspace1", bytes("k"));
+            rm.add("Standard1", Util.cellname("c1"), ByteBuffer.allocate(100), 0);
 
             // Adding it twice (won't change segment)
             CommitLog.instance.add(rm);
@@ -272,19 +310,19 @@ public class CommitLogTest extends SchemaLoader
         ColumnFamilyStore cfs1 = Keyspace.open("Keyspace1").getColumnFamilyStore("Standard1");
         ColumnFamilyStore cfs2 = Keyspace.open("Keyspace1").getColumnFamilyStore("Standard2");
 
-        final RowMutation rm1 = new RowMutation("Keyspace1", bytes("k"));
-        rm1.add("Standard1", bytes("c1"), ByteBuffer.allocate(100), 0);
+        final Mutation rm1 = new Mutation("Keyspace1", bytes("k"));
+        rm1.add("Standard1", Util.cellname("c1"), ByteBuffer.allocate(100), 0);
         rm1.apply();
         cfs1.truncateBlocking();
         DatabaseDescriptor.setAutoSnapshot(prev);
-        final RowMutation rm2 = new RowMutation("Keyspace1", bytes("k"));
-        rm2.add("Standard2", bytes("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize() / 4), 0);
+        final Mutation rm2 = new Mutation("Keyspace1", bytes("k"));
+        rm2.add("Standard2", Util.cellname("c1"), ByteBuffer.allocate(DatabaseDescriptor.getCommitLogSegmentSize() / 4), 0);
 
         for (int i = 0 ; i < 5 ; i++)
             CommitLog.instance.add(rm2);
 
         Assert.assertEquals(2, CommitLog.instance.activeSegments());
-        ReplayPosition position = CommitLog.instance.getContext().get();
+        ReplayPosition position = CommitLog.instance.getContext();
         for (Keyspace ks : Keyspace.system())
             for (ColumnFamilyStore syscfs : ks.getColumnFamilyStores())
                 CommitLog.instance.discardCompletedSegments(syscfs.metadata.cfId, position);
@@ -301,17 +339,18 @@ public class CommitLogTest extends SchemaLoader
         Keyspace notDurableKs = Keyspace.open("NoCommitlogSpace");
         Assert.assertFalse(notDurableKs.metadata.durableWrites);
         ColumnFamilyStore cfs = notDurableKs.getColumnFamilyStore("Standard1");
-        RowMutation rm;
+        CellNameType type = notDurableKs.getColumnFamilyStore("Standard1").getComparator();
+        Mutation rm;
         DecoratedKey dk = Util.dk("key1");
 
         // add data
-        rm = new RowMutation("NoCommitlogSpace", dk.key);
-        rm.add("Standard1", ByteBufferUtil.bytes("Column1"), ByteBufferUtil.bytes("abcd"), 0);
+        rm = new Mutation("NoCommitlogSpace", dk.getKey());
+        rm.add("Standard1", Util.cellname("Column1"), ByteBufferUtil.bytes("abcd"), 0);
         rm.apply();
 
-        ReadCommand command = new SliceByNamesReadCommand("Keyspace1", dk.key, "Standard1", System.currentTimeMillis(), new NamesQueryFilter(FBUtilities.singleton(ByteBufferUtil.bytes("Column1"), cfs.getComparator())));
+        ReadCommand command = new SliceByNamesReadCommand("NoCommitlogSpace", dk.getKey(), "Standard1", System.currentTimeMillis(), new NamesQueryFilter(FBUtilities.singleton(Util.cellname("Column1"), type)));
         Row row = command.getRow(notDurableKs);
-        Column col = row.cf.getColumn(ByteBufferUtil.bytes("Column1"));
+        Cell col = row.cf.getColumn(Util.cellname("Column1"));
         Assert.assertEquals(col.value(), ByteBuffer.wrap("abcd".getBytes()));
         cfs.truncateBlocking();
         DatabaseDescriptor.setAutoSnapshot(prevAutoSnapshot);

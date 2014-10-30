@@ -27,6 +27,7 @@ import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.serializers.AsciiSerializer;
+import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class AsciiType extends AbstractType<String>
 {
@@ -45,7 +46,7 @@ public class AsciiType extends AbstractType<String>
 
     public int compare(ByteBuffer o1, ByteBuffer o2)
     {
-        return BytesType.bytesCompare(o1, o2);
+        return ByteBufferUtil.compareUnsigned(o1, o2);
     }
 
     public ByteBuffer fromString(String source)
@@ -72,5 +73,10 @@ public class AsciiType extends AbstractType<String>
     public TypeSerializer<String> getSerializer()
     {
         return AsciiSerializer.instance;
+    }
+
+    public boolean isByteOrderComparable()
+    {
+        return true;
     }
 }

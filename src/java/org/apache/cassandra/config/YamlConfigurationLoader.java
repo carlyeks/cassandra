@@ -18,16 +18,22 @@
 package org.apache.cassandra.config;
 
 import java.beans.IntrospectionException;
-import java.io.IOException;
+import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.InputStream;
+import java.io.IOException;
 import java.net.URL;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
+import com.google.common.base.Joiner;
+import com.google.common.io.ByteStreams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.io.util.FileUtils;
 import org.yaml.snakeyaml.TypeDescription;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.error.YAMLException;
@@ -61,7 +67,13 @@ public class YamlConfigurationLoader implements ConfigurationLoader
             ClassLoader loader = DatabaseDescriptor.class.getClassLoader();
             url = loader.getResource(configUrl);
             if (url == null)
-                throw new ConfigurationException("Cannot locate " + configUrl);
+            {
+                String required = "file:" + File.separator + File.separator;
+                if (!configUrl.startsWith(required))
+                    throw new ConfigurationException("Expecting URI in variable: [cassandra.config].  Please prefix the file with " + required + File.separator +
+                            " for local files or " + required + "<server>" + File.separator + " for remote files.  Aborting.");
+                throw new ConfigurationException("Cannot locate " + configUrl + ".  If this is a local file, please confirm you've provided " + required + File.separator + " as a URI prefix.");
+            }
         }
 
         return url;
@@ -78,15 +90,19 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         try
         {
             logger.info("Loading settings from {}", url);
-            try
+            byte[] configBytes;
+            try (InputStream is = url.openStream())
             {
-                input = url.openStream();
+                configBytes = ByteStreams.toByteArray(is);
             }
             catch (IOException e)
             {
                 // getStorageConfigURL should have ruled this out
                 throw new AssertionError(e);
             }
+            
+            logConfig(configBytes);
+            
             org.yaml.snakeyaml.constructor.Constructor constructor = new org.yaml.snakeyaml.constructor.Constructor(Config.class);
             TypeDescription seedDesc = new TypeDescription(SeedProviderDef.class);
             seedDesc.putMapPropertyType("parameters", String.class, String.class);
@@ -94,7 +110,7 @@ public class YamlConfigurationLoader implements ConfigurationLoader
             MissingPropertiesChecker propertiesChecker = new MissingPropertiesChecker();
             constructor.setPropertyUtils(propertiesChecker);
             Yaml yaml = new Yaml(constructor);
-            Config result = yaml.loadAs(input, Config.class);
+            Config result = yaml.loadAs(new ByteArrayInputStream(configBytes), Config.class);
             result.configHintedHandoff();
             propertiesChecker.check();
             return result;
@@ -103,10 +119,20 @@ public class YamlConfigurationLoader implements ConfigurationLoader
         {
             throw new ConfigurationException("Invalid yaml", e);
         }
-        finally
+    }
+
+    private void logConfig(byte[] configBytes)
+    {
+        Map<Object, Object> configMap = new TreeMap<>((Map<?, ?>) new Yaml().load(new ByteArrayInputStream(configBytes)));
+        // these keys contain passwords, don't log them
+        for (String sensitiveKey : new String[] { "client_encryption_options", "server_encryption_options" })
         {
-            FileUtils.closeQuietly(input);
+            if (configMap.containsKey(sensitiveKey))
+            {
+                configMap.put(sensitiveKey, "<REDACTED>");
+            }
         }
+        logger.info("Node configuration:[" + Joiner.on("; ").join(configMap.entrySet()) + "]");
     }
     
     private static class MissingPropertiesChecker extends PropertyUtils 

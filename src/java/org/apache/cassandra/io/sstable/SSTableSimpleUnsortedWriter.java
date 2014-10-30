@@ -27,16 +27,16 @@ import java.util.concurrent.SynchronousQueue;
 import com.google.common.base.Throwables;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.db.Column;
+import org.apache.cassandra.db.ArrayBackedSortedColumns;
+import org.apache.cassandra.db.Cell;
 import org.apache.cassandra.db.ColumnFamily;
-import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.TreeMapBackedSortedColumns;
 import org.apache.cassandra.db.TypeSizes;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.net.MessagingService;
+import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
  * A SSTable writer that doesn't assume rows are in sorted order.
@@ -79,7 +79,7 @@ public class SSTableSimpleUnsortedWriter extends AbstractSSTableSimpleWriter
                                        int bufferSizeInMB,
                                        CompressionParameters compressParameters)
     {
-        this(directory, new CFMetaData(keyspace, columnFamily, subComparator == null ? ColumnFamilyType.Standard : ColumnFamilyType.Super, comparator, subComparator).compressionParameters(compressParameters), partitioner, bufferSizeInMB);
+        this(directory, CFMetaData.denseCFMetaData(keyspace, columnFamily, comparator, subComparator).compressionParameters(compressParameters), partitioner, bufferSizeInMB);
     }
 
     public SSTableSimpleUnsortedWriter(File directory,
@@ -106,15 +106,15 @@ public class SSTableSimpleUnsortedWriter extends AbstractSSTableSimpleWriter
     }
 
     @Override
-    protected void addColumn(Column column) throws IOException
+    protected void addColumn(Cell cell) throws IOException
     {
-        super.addColumn(column);
-        countColumn(column);
+        super.addColumn(cell);
+        countColumn(cell);
     }
 
-    protected void countColumn(Column column) throws IOException
+    protected void countColumn(Cell cell) throws IOException
     {
-        currentSize += column.serializedSize(TypeSizes.NATIVE);
+        currentSize += cell.serializedSize(metadata.comparator, TypeSizes.NATIVE);
 
         // We don't want to sync in writeRow() only as this might blow up the bufferSize for wide rows.
         if (currentSize > bufferSize)
@@ -134,14 +134,14 @@ public class SSTableSimpleUnsortedWriter extends AbstractSSTableSimpleWriter
             // on disk is:
             //   - the row key: 2 bytes size + key size bytes
             //   - the row level deletion infos: 4 + 8 bytes
-            currentSize += 14 + currentKey.key.remaining();
+            currentSize += 14 + currentKey.getKey().remaining();
         }
         return previous;
     }
 
     protected ColumnFamily createColumnFamily() throws IOException
     {
-        return TreeMapBackedSortedColumns.factory.create(metadata);
+        return ArrayBackedSortedColumns.factory.create(metadata);
     }
 
     public void close() throws IOException
@@ -218,6 +218,7 @@ public class SSTableSimpleUnsortedWriter extends AbstractSSTableSimpleWriter
             }
             catch (Throwable e)
             {
+                JVMStabilityInspector.inspectThrowable(e);
                 if (writer != null)
                     writer.abort();
                 exception = e;

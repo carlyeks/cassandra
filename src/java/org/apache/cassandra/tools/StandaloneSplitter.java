@@ -25,14 +25,11 @@ import java.util.*;
 import org.apache.commons.cli.*;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.compaction.LeveledManifest;
 import org.apache.cassandra.db.compaction.SSTableSplitter;
 import org.apache.cassandra.io.sstable.*;
-import org.apache.cassandra.service.CassandraDaemon;
 import org.apache.cassandra.utils.Pair;
 
 import static org.apache.cassandra.tools.BulkLoader.CmdLineOptions;
@@ -40,11 +37,6 @@ import static org.apache.cassandra.tools.BulkLoader.CmdLineOptions;
 public class StandaloneSplitter
 {
     public static final int DEFAULT_SSTABLE_SIZE = 50;
-
-    static
-    {
-        CassandraDaemon.initLog4j();
-    }
 
     private static final String TOOL_NAME = "sstablessplit";
     private static final String VERBOSE_OPTION = "verbose";
@@ -124,6 +116,11 @@ public class StandaloneSplitter
                 try
                 {
                     SSTableReader sstable = SSTableReader.openNoValidation(fn.getKey(), fn.getValue(), cfs.metadata);
+                    if (!isSSTableLargerEnough(sstable, options.sizeInMB)) {
+                        System.out.println(String.format("Skipping %s: it's size (%.3f MB) is less than the split size (%d MB)",
+                                sstable.getFilename(), ((sstable.onDiskLength() * 1.0d) / 1024L) / 1024L, options.sizeInMB));
+                        continue;
+                    }
                     sstables.add(sstable);
 
                     if (options.snapshot) {
@@ -139,6 +136,10 @@ public class StandaloneSplitter
                         e.printStackTrace(System.err);
                 }
             }
+            if (sstables.isEmpty()) {
+                System.out.println("No sstables needed splitting.");
+                System.exit(0);
+            }
             if (options.snapshot)
                 System.out.println(String.format("Pre-split sstables snapshotted into snapshot %s", snapshotName));
 
@@ -148,10 +149,6 @@ public class StandaloneSplitter
                 try
                 {
                     new SSTableSplitter(cfs, sstable, options.sizeInMB).split();
-
-                    // Remove the sstable
-                    sstable.markObsolete();
-                    sstable.releaseReference();
                 }
                 catch (Exception e)
                 {
@@ -170,6 +167,13 @@ public class StandaloneSplitter
                 e.printStackTrace(System.err);
             System.exit(1);
         }
+    }
+
+    /**
+     * filter the sstable which size is less than the expected max sstable size.
+     */
+    private static boolean isSSTableLargerEnough(SSTableReader sstable, int sizeInMB) {
+        return sstable.onDiskLength() > sizeInMB * 1024L * 1024L;
     }
 
     private static class Options

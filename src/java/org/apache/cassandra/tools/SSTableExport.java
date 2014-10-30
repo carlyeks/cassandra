@@ -20,7 +20,6 @@ package org.apache.cassandra.tools;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.nio.ByteBuffer;
 import java.util.*;
 
 import org.apache.commons.cli.*;
@@ -29,6 +28,7 @@ import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -37,9 +37,6 @@ import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.codehaus.jackson.JsonGenerator;
 import org.codehaus.jackson.map.ObjectMapper;
-
-import static org.apache.cassandra.utils.ByteBufferUtil.bytesToHex;
-import static org.apache.cassandra.utils.ByteBufferUtil.hexToBytes;
 
 /**
  * Export SSTables to JSON format.
@@ -97,67 +94,19 @@ public class SSTableExport
         out.print(": ");
     }
 
-    /**
-     * JSON ColumnFamily metadata serializer.</br> Serializes:
-     * <ul>
-     * <li>column family deletion info (if present)</li>
-     * </ul>
-     *
-     * @param out The output steam to write data
-     * @param deletionInfo
-     */
-    private static void writeMeta(PrintStream out, DeletionInfo deletionInfo)
-    {
-        if (!deletionInfo.isLive())
-        {
-            // begin meta
-            writeKey(out, "metadata");
-            writeDeletionInfo(out, deletionInfo.getTopLevelDeletion());
-            out.print(",");
-        }
-    }
-
-    private static void writeDeletionInfo(PrintStream out, DeletionTime deletionTime)
-    {
-        out.print("{");
-        writeKey(out, "deletionInfo");
-        // only store topLevelDeletion (serializeForSSTable only uses this)
-        writeJSON(out, deletionTime);
-        out.print("}");
-    }
-
-    /**
-     * Serialize columns using given column iterator
-     *
-     * @param atoms      column iterator
-     * @param out        output stream
-     * @param cfMetaData Column Family metadata (to get validator)
-     */
-    private static void serializeAtoms(Iterator<OnDiskAtom> atoms, PrintStream out, CFMetaData cfMetaData)
-    {
-        while (atoms.hasNext())
-        {
-            writeJSON(out, serializeAtom(atoms.next(), cfMetaData));
-
-            if (atoms.hasNext())
-                out.print(", ");
-        }
-    }
-
     private static List<Object> serializeAtom(OnDiskAtom atom, CFMetaData cfMetaData)
     {
-        AbstractType<?> comparator = cfMetaData.comparator;
-        if (atom instanceof Column)
+        if (atom instanceof Cell)
         {
-            return serializeColumn((Column) atom, comparator, cfMetaData);
+            return serializeColumn((Cell) atom, cfMetaData);
         }
         else
         {
             assert atom instanceof RangeTombstone;
             RangeTombstone rt = (RangeTombstone) atom;
             ArrayList<Object> serializedColumn = new ArrayList<Object>();
-            serializedColumn.add(comparator.getString(rt.min));
-            serializedColumn.add(comparator.getString(rt.max));
+            serializedColumn.add(cfMetaData.comparator.getString(rt.min));
+            serializedColumn.add(cfMetaData.comparator.getString(rt.max));
             serializedColumn.add(rt.data.markedForDeleteAt);
             serializedColumn.add("t");
             serializedColumn.add(rt.data.localDeletionTime);
@@ -166,46 +115,55 @@ public class SSTableExport
     }
 
     /**
-     * Serialize a given column to the JSON format
+     * Serialize a given cell to a List of Objects that jsonMapper knows how to turn into strings.  Format is
      *
-     * @param column     column presentation
-     * @param comparator columns comparator
+     * human_readable_name, value, timestamp, [flag, [options]]
+     *
+     * Value is normally the human readable value as rendered by the validator, but for deleted cells we
+     * give the local deletion time instead.
+     *
+     * Flag may be exactly one of {d,e,c} for deleted, expiring, or counter:
+     *  - No options for deleted cells
+     *  - If expiring, options will include the TTL and local deletion time.
+     *  - If counter, options will include timestamp of last delete
+     *
+     * @param cell     cell presentation
      * @param cfMetaData Column Family metadata (to get validator)
-     * @return column as serialized list
+     * @return cell as serialized list
      */
-    private static List<Object> serializeColumn(Column column, AbstractType<?> comparator, CFMetaData cfMetaData)
+    private static List<Object> serializeColumn(Cell cell, CFMetaData cfMetaData)
     {
+        CellNameType comparator = cfMetaData.comparator;
         ArrayList<Object> serializedColumn = new ArrayList<Object>();
 
-        ByteBuffer name = ByteBufferUtil.clone(column.name());
-        ByteBuffer value = ByteBufferUtil.clone(column.value());
+        serializedColumn.add(comparator.getString(cell.name()));
 
-        serializedColumn.add(comparator.getString(name));
-        if (column instanceof DeletedColumn)
+        if (cell instanceof DeletedCell)
         {
-            serializedColumn.add(ByteBufferUtil.bytesToHex(value));
+            serializedColumn.add(cell.getLocalDeletionTime());
         }
         else
         {
-            AbstractType<?> validator = cfMetaData.getValueValidatorFromColumnName(name);
-            serializedColumn.add(validator.getString(value));
+            AbstractType<?> validator = cfMetaData.getValueValidator(cell.name());
+            serializedColumn.add(validator.getString(cell.value()));
         }
-        serializedColumn.add(column.timestamp());
 
-        if (column instanceof DeletedColumn)
+        serializedColumn.add(cell.timestamp());
+
+        if (cell instanceof DeletedCell)
         {
             serializedColumn.add("d");
         }
-        else if (column instanceof ExpiringColumn)
+        else if (cell instanceof ExpiringCell)
         {
             serializedColumn.add("e");
-            serializedColumn.add(((ExpiringColumn) column).getTimeToLive());
-            serializedColumn.add(column.getLocalDeletionTime());
+            serializedColumn.add(((ExpiringCell) cell).getTimeToLive());
+            serializedColumn.add(cell.getLocalDeletionTime());
         }
-        else if (column instanceof CounterColumn)
+        else if (cell instanceof CounterCell)
         {
             serializedColumn.add("c");
-            serializedColumn.add(((CounterColumn) column).timestampOfLastDelete());
+            serializedColumn.add(((CounterCell) cell).timestampOfLastDelete());
         }
 
         return serializedColumn;
@@ -227,17 +185,32 @@ public class SSTableExport
     {
         out.print("{");
         writeKey(out, "key");
-        writeJSON(out, bytesToHex(key.key));
-        out.print(",");
+        writeJSON(out, metadata.getKeyValidator().getString(key.getKey()));
+        out.print(",\n");
 
-        writeMeta(out, deletionInfo);
+        if (!deletionInfo.isLive())
+        {
+            out.print(" ");
+            writeKey(out, "metadata");
+            out.print("{");
+            writeKey(out, "deletionInfo");
+            writeJSON(out, deletionInfo.getTopLevelDeletion());
+            out.print("}");
+            out.print(",\n");
+        }
 
-        writeKey(out, "columns");
+        out.print(" ");
+        writeKey(out, "cells");
         out.print("[");
+        while (atoms.hasNext())
+        {
+            writeJSON(out, serializeAtom(atoms.next(), metadata));
 
-        serializeAtoms(atoms, out, metadata);
-
+            if (atoms.hasNext())
+                out.print(",\n           ");
+        }
         out.print("]");
+
         out.print("}");
     }
 
@@ -246,9 +219,10 @@ public class SSTableExport
      *
      * @param desc the descriptor of the file to export the rows from
      * @param outs PrintStream to write the output to
+     * @param metadata Metadata to print keys in a proper format
      * @throws IOException on failure to read/write input/output
      */
-    public static void enumeratekeys(Descriptor desc, PrintStream outs)
+    public static void enumeratekeys(Descriptor desc, PrintStream outs, CFMetaData metadata)
     throws IOException
     {
         KeyIterator iter = new KeyIterator(desc);
@@ -264,7 +238,7 @@ public class SSTableExport
                     throw new IOException("Key out of order! " + lastKey + " > " + key);
                 lastKey = key;
 
-                outs.println(bytesToHex(key.key));
+                outs.println(metadata.getKeyValidator().getString(key.getKey()));
                 checkStream(outs); // flushes
             }
         }
@@ -281,9 +255,10 @@ public class SSTableExport
      * @param outs     PrintStream to write the output to
      * @param toExport the keys corresponding to the rows to export
      * @param excludes keys to exclude from export
+     * @param metadata Metadata to print keys in a proper format
      * @throws IOException on failure to read/write input/output
      */
-    public static void export(Descriptor desc, PrintStream outs, Collection<String> toExport, String[] excludes) throws IOException
+    public static void export(Descriptor desc, PrintStream outs, Collection<String> toExport, String[] excludes, CFMetaData metadata) throws IOException
     {
         SSTableReader sstable = SSTableReader.open(desc);
         RandomAccessReader dfile = sstable.openDataReader();
@@ -303,7 +278,7 @@ public class SSTableExport
 
             for (String key : toExport)
             {
-                DecoratedKey decoratedKey = partitioner.decorateKey(hexToBytes(key));
+                DecoratedKey decoratedKey = partitioner.decorateKey(metadata.getKeyValidator().fromString(key));
 
                 if (lastKey != null && lastKey.compareTo(decoratedKey) > 0)
                     throw new IOException("Key out of order! " + lastKey + " > " + decoratedKey);
@@ -316,15 +291,9 @@ public class SSTableExport
 
                 dfile.seek(entry.position);
                 ByteBufferUtil.readWithShortLength(dfile); // row key
-                if (sstable.descriptor.version.hasRowSizeAndColumnCount)
-                    dfile.readLong(); // row size
                 DeletionInfo deletionInfo = new DeletionInfo(DeletionTime.serializer.deserialize(dfile));
-                int columnCount = sstable.descriptor.version.hasRowSizeAndColumnCount ? dfile.readInt()
-                        : Integer.MAX_VALUE;
 
-                Iterator<OnDiskAtom> atomIterator = sstable.metadata.getOnDiskIterator(dfile, columnCount,
-                        sstable.descriptor.version);
-
+                Iterator<OnDiskAtom> atomIterator = sstable.metadata.getOnDiskIterator(dfile, sstable.descriptor.version);
                 checkStream(outs);
 
                 if (i != 0)
@@ -344,7 +313,7 @@ public class SSTableExport
 
     // This is necessary to accommodate the test suite since you cannot open a Reader more
     // than once from within the same process.
-    static void export(SSTableReader reader, PrintStream outs, String[] excludes) throws IOException
+    static void export(SSTableReader reader, PrintStream outs, String[] excludes, CFMetaData metadata) throws IOException
     {
         Set<String> excludeSet = new HashSet<String>();
 
@@ -364,7 +333,7 @@ public class SSTableExport
             {
                 row = (SSTableIdentityIterator) scanner.next();
 
-                String currentKey = bytesToHex(row.getKey().key);
+                String currentKey = row.getColumnFamily().metadata().getKeyValidator().getString(row.getKey().getKey());
 
                 if (excludeSet.contains(currentKey))
                     continue;
@@ -392,11 +361,12 @@ public class SSTableExport
      * @param desc     the descriptor of the sstable to read from
      * @param outs     PrintStream to write the output to
      * @param excludes keys to exclude from export
+     * @param metadata Metadata to print keys in a proper format
      * @throws IOException on failure to read/write input/output
      */
-    public static void export(Descriptor desc, PrintStream outs, String[] excludes) throws IOException
+    public static void export(Descriptor desc, PrintStream outs, String[] excludes, CFMetaData metadata) throws IOException
     {
-        export(SSTableReader.open(desc), outs, excludes);
+        export(SSTableReader.open(desc), outs, excludes, metadata);
     }
 
     /**
@@ -404,11 +374,12 @@ public class SSTableExport
      *
      * @param desc     the descriptor of the sstable to read from
      * @param excludes keys to exclude from export
+     * @param metadata Metadata to print keys in a proper format
      * @throws IOException on failure to read/write SSTable/standard out
      */
-    public static void export(Descriptor desc, String[] excludes) throws IOException
+    public static void export(Descriptor desc, String[] excludes, CFMetaData metadata) throws IOException
     {
-        export(desc, System.out, excludes);
+        export(desc, System.out, excludes, metadata);
     }
 
     /**
@@ -460,7 +431,7 @@ public class SSTableExport
         }
         Keyspace keyspace = Keyspace.open(descriptor.ksname);
 
-        // Make it work for indexes too - find parent cf if necessary
+        // Make it works for indexes too - find parent cf if necessary
         String baseName = descriptor.cfname;
         if (descriptor.cfname.contains("."))
         {
@@ -469,9 +440,10 @@ public class SSTableExport
         }
 
         // IllegalArgumentException will be thrown here if ks/cf pair does not exist
+        ColumnFamilyStore cfStore = null;
         try
         {
-            keyspace.getColumnFamilyStore(baseName);
+            cfStore = keyspace.getColumnFamilyStore(baseName);
         }
         catch (IllegalArgumentException e)
         {
@@ -484,14 +456,14 @@ public class SSTableExport
         {
             if (cmd.hasOption(ENUMERATEKEYS_OPTION))
             {
-                enumeratekeys(descriptor, System.out);
+                enumeratekeys(descriptor, System.out, cfStore.metadata);
             }
             else
             {
                 if ((keys != null) && (keys.length > 0))
-                    export(descriptor, System.out, Arrays.asList(keys), excludes);
+                    export(descriptor, System.out, Arrays.asList(keys), excludes, cfStore.metadata);
                 else
-                    export(descriptor, excludes);
+                    export(descriptor, excludes, cfStore.metadata);
             }
         }
         catch (IOException e)

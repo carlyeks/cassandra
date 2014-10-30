@@ -22,7 +22,9 @@ import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.Map;
 
-import org.apache.cassandra.db.Column;
+import org.apache.cassandra.db.BufferCell;
+import org.apache.cassandra.db.Cell;
+import org.apache.cassandra.db.composites.CellNames;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.hadoop.ConfigHelper;
 import org.apache.cassandra.hadoop.cql3.CqlConfigHelper;
@@ -99,9 +101,9 @@ public class CqlNativeStorage extends CqlStorage
                 ByteBuffer columnValue = row.getBytesUnsafe(ByteBufferUtil.string(cdef.name.duplicate()));
                 if (columnValue != null)
                 {
-                    Column column = new Column(cdef.name, columnValue);
-                    AbstractType<?> validator = getValidatorMap(cfDef).get(column.name());
-                    setTupleValue(tuple, i, cqlColumnToObj(column, cfDef), validator);
+                    Cell cell = new BufferCell(CellNames.simpleDense(cdef.name), columnValue);
+                    AbstractType<?> validator = getValidatorMap(cfDef).get(cdef.name);
+                    setTupleValue(tuple, i, cqlColumnToObj(cell, cfDef), validator);
                 }
                 else
                     tuple.set(i, null);
@@ -142,7 +144,7 @@ public class CqlNativeStorage extends CqlStorage
             CqlConfigHelper.setInputMaxConnections(conf, nativeMaxConnections);
         if (nativeMinSimultReqs != null)
             CqlConfigHelper.setInputMinSimultReqPerConnections(conf, nativeMinSimultReqs);
-        if (nativeMinSimultReqs != null)
+        if (nativeMaxSimultReqs != null)
             CqlConfigHelper.setInputMaxSimultReqPerConnections(conf, nativeMaxSimultReqs);
         if (nativeConnectionTimeout != null)
             CqlConfigHelper.setInputNativeConnectionTimeout(conf, nativeConnectionTimeout);

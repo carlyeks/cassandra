@@ -34,15 +34,14 @@ import org.apache.cassandra.cql3.statements.*;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.config.*;
 import org.apache.cassandra.db.*;
+import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestValidationException;
-import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.utils.Allocator;
 import org.apache.cassandra.utils.Pair;
 
 /**
@@ -199,21 +198,22 @@ public class CQLSSTableWriter implements Closeable
         if (values.size() != boundNames.size())
             throw new InvalidRequestException(String.format("Invalid number of arguments, expecting %d values but got %d", boundNames.size(), values.size()));
 
-        List<ByteBuffer> keys = insert.buildPartitionKeyNames(values);
-        ColumnNameBuilder clusteringPrefix = insert.createClusteringPrefixBuilder(values);
+        QueryOptions options = QueryOptions.forInternalCalls(null, values);
+        List<ByteBuffer> keys = insert.buildPartitionKeyNames(options);
+        Composite clusteringPrefix = insert.createClusteringPrefix(options);
 
         long now = System.currentTimeMillis() * 1000;
         UpdateParameters params = new UpdateParameters(insert.cfm,
-                                                       values,
-                                                       insert.getTimestamp(now, values),
-                                                       insert.getTimeToLive(values),
-                                                       Collections.<ByteBuffer, ColumnGroupMap>emptyMap());
+                                                       options,
+                                                       insert.getTimestamp(now, options),
+                                                       insert.getTimeToLive(options),
+                                                       Collections.<ByteBuffer, CQL3Row>emptyMap());
 
         try
         {
-            for (ByteBuffer key: keys)
+            for (ByteBuffer key : keys)
             {
-                if (writer.currentKey() == null || !key.equals(writer.currentKey().key))
+                if (writer.currentKey() == null || !key.equals(writer.currentKey().getKey()))
                     writer.newRow(key);
                 insert.addUpdateForKey(writer.currentColumnFamily(), key, clusteringPrefix, params);
             }
@@ -514,15 +514,15 @@ public class CQLSSTableWriter implements Closeable
         @Override
         protected ColumnFamily createColumnFamily()
         {
-            return new TreeMapBackedSortedColumns(metadata)
+            return new ArrayBackedSortedColumns(metadata, false)
             {
                 @Override
-                public void addColumn(Column column, Allocator allocator)
+                public void addColumn(Cell cell)
                 {
-                    super.addColumn(column, allocator);
+                    super.addColumn(cell);
                     try
                     {
-                        countColumn(column);
+                        countColumn(cell);
                     }
                     catch (IOException e)
                     {

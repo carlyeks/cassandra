@@ -17,8 +17,9 @@
  */
 package org.apache.cassandra.transport.messages;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.handler.codec.CodecException;
 import com.google.common.base.Predicate;
-import org.jboss.netty.buffer.ChannelBuffer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,7 +41,7 @@ public class ErrorMessage extends Message.Response
 
     public static final Message.Codec<ErrorMessage> codec = new Message.Codec<ErrorMessage>()
     {
-        public ErrorMessage decode(ChannelBuffer body, int version)
+        public ErrorMessage decode(ByteBuf body, int version)
         {
             ExceptionCode code = ExceptionCode.fromValue(body.readInt());
             String msg = CBUtil.readString(body);
@@ -120,7 +121,7 @@ public class ErrorMessage extends Message.Response
             return new ErrorMessage(te);
         }
 
-        public void encode(ErrorMessage msg, ChannelBuffer dest, int version)
+        public void encode(ErrorMessage msg, ByteBuf dest, int version)
         {
             dest.writeInt(msg.error.code().value);
             CBUtil.writeString(msg.error.getMessage(), dest);
@@ -216,7 +217,19 @@ public class ErrorMessage extends Message.Response
     public static ErrorMessage fromException(Throwable e, Predicate<Throwable> unexpectedExceptionHandler)
     {
         int streamId = 0;
-        if (e instanceof WrappedException)
+
+        // Netty will wrap exceptions during decoding in a CodecException. If the cause was one of our ProtocolExceptions
+        // or some other internal exception, extract that and use it.
+        if (e instanceof CodecException)
+        {
+            Throwable cause = e.getCause();
+            if (cause != null && cause instanceof WrappedException)
+            {
+                streamId = ((WrappedException)cause).streamId;
+                e = cause.getCause();
+            }
+        }
+        else if (e instanceof WrappedException)
         {
             streamId = ((WrappedException)e).streamId;
             e = e.getCause();

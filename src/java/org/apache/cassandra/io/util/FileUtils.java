@@ -17,16 +17,23 @@
  */
 package org.apache.cassandra.io.util;
 
-import java.io.*;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.io.Closeable;
+import java.io.DataInput;
+import java.io.EOFException;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
-import java.nio.file.Files;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.text.DecimalFormat;
 import java.util.Arrays;
+
+import sun.nio.ch.DirectBuffer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +47,7 @@ import org.apache.cassandra.io.FSReadError;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.utils.JVMStabilityInspector;
 
 public class FileUtils
 {
@@ -50,23 +58,28 @@ public class FileUtils
     private static final double TB = 1024*1024*1024*1024d;
 
     private static final DecimalFormat df = new DecimalFormat("#.##");
-
-    private static final Method cleanerMethod;
+    private static final boolean canCleanDirectBuffers;
 
     static
     {
-        Method m;
+        boolean canClean = false;
         try
         {
-            m = Class.forName("sun.nio.ch.DirectBuffer").getMethod("cleaner");
+            ByteBuffer buf = ByteBuffer.allocateDirect(1);
+            ((DirectBuffer) buf).cleaner().clean();
+            canClean = true;
         }
-        catch (Exception e)
+        catch (Throwable t)
         {
-            // Perhaps a non-sun-derived JVM - contributions welcome
-            logger.info("Cannot initialize un-mmaper.  (Are you using a non-SUN JVM?)  Compacted data files will not be removed promptly.  Consider using a SUN JVM or using standard disk access mode");
-            m = null;
+            JVMStabilityInspector.inspectThrowable(t);
+            logger.info("Cannot initialize un-mmaper.  (Are you using a non-Oracle JVM?)  Compacted data files will not be removed promptly.  Consider using an Oracle JVM or using standard disk access mode");
         }
-        cleanerMethod = m;
+        canCleanDirectBuffers = canClean;
+    }
+
+    public static void createHardLink(String from, String to)
+    {
+        createHardLink(new File(from), new File(to));
     }
 
     public static void createHardLink(File from, File to)
@@ -112,7 +125,7 @@ public class FileUtils
     {
         assert file.exists() : "attempted to delete non-existing file " + file.getName();
         if (logger.isDebugEnabled())
-            logger.debug("Deleting " + file.getName());
+            logger.debug("Deleting {}", file.getName());
         try
         {
             Files.delete(file.toPath());
@@ -213,7 +226,7 @@ public class FileUtils
         }
         catch (Exception e)
         {
-            logger.warn("Failed closing " + c, e);
+            logger.warn("Failed closing {}", c, e);
         }
     }
 
@@ -235,7 +248,7 @@ public class FileUtils
             catch (IOException ex)
             {
                 e = ex;
-                logger.warn("Failed closing stream " + c, ex);
+                logger.warn("Failed closing stream {}", c, ex);
             }
         }
         if (e != null)
@@ -268,28 +281,12 @@ public class FileUtils
 
     public static boolean isCleanerAvailable()
     {
-        return cleanerMethod != null;
+        return canCleanDirectBuffers;
     }
 
     public static void clean(MappedByteBuffer buffer)
     {
-        try
-        {
-            Object cleaner = cleanerMethod.invoke(buffer);
-            cleaner.getClass().getMethod("clean").invoke(cleaner);
-        }
-        catch (IllegalAccessException e)
-        {
-            throw new RuntimeException(e);
-        }
-        catch (InvocationTargetException e)
-        {
-            throw new RuntimeException(e);
-        }
-        catch (NoSuchMethodException e)
-        {
-            throw new RuntimeException(e);
-        }
+        ((DirectBuffer) buffer).cleaner().clean();
     }
 
     public static void createDirectory(String directory)
@@ -396,19 +393,6 @@ public class FileUtils
         }
     }
 
-    public static void skipBytesFully(DataInput in, long bytes) throws IOException
-    {
-        long n = 0;
-        while (n < bytes)
-        {
-            int m = (int) Math.min(Integer.MAX_VALUE, bytes - n);
-            int skipped = in.skipBytes(m);
-            if (skipped == 0)
-                throw new EOFException("EOF after " + n + " bytes out of " + bytes);
-            n += skipped;
-        }
-    }
-
     public static void handleCorruptSSTable(CorruptSSTableException e)
     {
         if (DatabaseDescriptor.getDiskFailurePolicy() == Config.DiskFailurePolicy.stop_paranoid)
@@ -441,4 +425,21 @@ public class FileUtils
         }
     }
 
+    /**
+     * Get the size of a directory in bytes
+     * @param directory The directory for which we need size.
+     * @return The size of the directory
+     */
+    public static long folderSize(File directory)
+    {
+        long length = 0;
+        for (File file : directory.listFiles())
+        {
+            if (file.isFile())
+                length += file.length();
+            else
+                length += folderSize(file);
+        }
+        return length;
+    }
 }

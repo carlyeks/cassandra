@@ -52,7 +52,7 @@ public class CommitLogArchiver
     }
 
     public final Map<String, Future<?>> archivePending = new ConcurrentHashMap<String, Future<?>>();
-    public final ExecutorService executor = new JMXEnabledThreadPoolExecutor("commitlog_archiver");
+    public final ExecutorService executor = new JMXEnabledThreadPoolExecutor("CommitLogArchiver");
     private final String archiveCommand;
     private final String restoreCommand;
     private final String restoreDirectories;
@@ -118,6 +118,29 @@ public class CommitLogArchiver
         }
     }
 
+    public void maybeArchive(final CommitLogSegment segment)
+    {
+        if (Strings.isNullOrEmpty(archiveCommand))
+            return;
+
+        archivePending.put(segment.getName(), executor.submit(new WrappedRunnable()
+        {
+            protected void runMayThrow() throws IOException
+            {
+                segment.waitForFinalSync();
+                String command = archiveCommand.replace("%name", segment.getName());
+                command = command.replace("%path", segment.getPath());
+                exec(command);
+            }
+        }));
+    }
+
+    /**
+     * Differs from the above because it can be used on any file, rather than only
+     * managed commit log segments (and thus cannot call waitForFinalSync).
+     *
+     * Used to archive files present in the commit log directory at startup (CASSANDRA-6904)
+     */
     public void maybeArchive(final String path, final String name)
     {
         if (Strings.isNullOrEmpty(archiveCommand))
@@ -152,7 +175,7 @@ public class CommitLogArchiver
         {
             if (e.getCause() instanceof IOException)
             {
-                logger.info("Looks like the archiving of file {} failed earlier, cassandra is going to ignore this segment for now.", name);
+                logger.error("Looks like the archiving of file {} failed earlier, cassandra is going to ignore this segment for now.", name);
                 return false;
             }
             throw new RuntimeException(e);
@@ -175,7 +198,30 @@ public class CommitLogArchiver
             }
             for (File fromFile : files)
             {
-                File toFile = new File(DatabaseDescriptor.getCommitLogLocation(), new CommitLogDescriptor(CommitLogSegment.getNextId()).fileName());
+                CommitLogDescriptor fromHeader = CommitLogDescriptor.fromHeader(fromFile);
+                CommitLogDescriptor fromName = CommitLogDescriptor.isValid(fromFile.getName()) ? CommitLogDescriptor.fromFileName(fromFile.getName()) : null;
+                CommitLogDescriptor descriptor;
+                if (fromHeader == null && fromName == null)
+                    throw new IllegalStateException("Cannot safely construct descriptor for segment, either from its name or its header: " + fromFile.getPath());
+                else if (fromHeader != null && fromName != null && !fromHeader.equals(fromName))
+                    throw new IllegalStateException(String.format("Cannot safely construct descriptor for segment, as name and header descriptors do not match (%s vs %s): %s", fromHeader, fromName, fromFile.getPath()));
+                else if (fromName != null && fromHeader == null && fromName.version >= CommitLogDescriptor.VERSION_21)
+                    throw new IllegalStateException("Cannot safely construct descriptor for segment, as name descriptor implies a version that should contain a header descriptor, but that descriptor could not be read: " + fromFile.getPath());
+                else if (fromHeader != null)
+                    descriptor = fromHeader;
+                else descriptor = fromName;
+
+                if (descriptor.version > CommitLogDescriptor.VERSION_21)
+                    throw new IllegalStateException("Unsupported commit log version: " + descriptor.version);
+
+                File toFile = new File(DatabaseDescriptor.getCommitLogLocation(), descriptor.fileName());
+                if (toFile.exists())
+                {
+                    logger.debug("Skipping restore of archive {} as the segment already exists in the restore location {}",
+                                 fromFile.getPath(), toFile.getPath());
+                    continue;
+                }
+
                 String command = restoreCommand.replace("%from", fromFile.getPath());
                 command = command.replace("%to", toFile.getPath());
                 try

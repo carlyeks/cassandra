@@ -81,25 +81,20 @@ public class RingCache
                     try
                     {
                         rangeMap.put(r, InetAddress.getByName(host));
-                    }
-                    catch (UnknownHostException e)
+                    } catch (UnknownHostException e)
                     {
                         throw new AssertionError(e); // host strings are IPs
                     }
                 }
             }
         }
-        catch (InvalidRequestException e)
-        {
-            throw new RuntimeException(e);
-        }
-        catch (IOException e)
+        catch (InvalidRequestException | IOException e)
         {
             throw new RuntimeException(e);
         }
         catch (TException e)
         {
-            logger.debug("Error contacting seed list" + ConfigHelper.getOutputInitialAddress(conf) + " " + e.getMessage());
+            logger.debug("Error contacting seed list {} {}", ConfigHelper.getOutputInitialAddress(conf), e.getMessage());
         }
     }
 

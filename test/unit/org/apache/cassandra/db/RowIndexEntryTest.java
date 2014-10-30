@@ -22,6 +22,9 @@ import java.io.IOException;
 import junit.framework.Assert;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.composites.CellNames;
+import org.apache.cassandra.db.composites.SimpleDenseCellNameType;
+import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -35,20 +38,22 @@ public class RowIndexEntryTest extends SchemaLoader
         final RowIndexEntry simple = new RowIndexEntry(123);
 
         DataOutputBuffer buffer = new DataOutputBuffer();
-        RowIndexEntry.serializer.serialize(simple, buffer);
+        RowIndexEntry.Serializer serializer = new RowIndexEntry.Serializer(new SimpleDenseCellNameType(UTF8Type.instance));
 
-        Assert.assertEquals(buffer.size(), simple.serializedSize());
+        serializer.serialize(simple, buffer);
+
+        Assert.assertEquals(buffer.getLength(), serializer.serializedSize(simple));
 
         buffer = new DataOutputBuffer();
         ColumnFamily cf = ArrayBackedSortedColumns.factory.create("Keyspace1", "Standard1");
         ColumnIndex columnIndex = new ColumnIndex.Builder(cf, ByteBufferUtil.bytes("a"), new DataOutputBuffer())
         {{
             int idx = 0, size = 0;
-            Column column;
+            Cell column;
             do
             {
-                column = new Column(ByteBufferUtil.bytes("c" + idx++), ByteBufferUtil.bytes("v"), FBUtilities.timestampMicros());
-                size += column.serializedSize(TypeSizes.NATIVE);
+                column = new BufferCell(CellNames.simpleDense(ByteBufferUtil.bytes("c" + idx++)), ByteBufferUtil.bytes("v"), FBUtilities.timestampMicros());
+                size += column.serializedSize(new SimpleDenseCellNameType(UTF8Type.instance), TypeSizes.NATIVE);
 
                 add(column);
             }
@@ -58,7 +63,7 @@ public class RowIndexEntryTest extends SchemaLoader
 
         RowIndexEntry withIndex = RowIndexEntry.create(0xdeadbeef, DeletionTime.LIVE, columnIndex);
 
-        RowIndexEntry.serializer.serialize(withIndex, buffer);
-        Assert.assertEquals(buffer.size(), withIndex.serializedSize());
+        serializer.serialize(withIndex, buffer);
+        Assert.assertEquals(buffer.getLength(), serializer.serializedSize(withIndex));
     }
 }

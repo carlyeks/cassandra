@@ -32,7 +32,6 @@ import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 
-import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 
 import org.apache.cassandra.hadoop.HadoopCompat;
@@ -43,6 +42,7 @@ import org.apache.cassandra.db.marshal.BytesType;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.hadoop.ColumnFamilySplit;
 import org.apache.cassandra.hadoop.ConfigHelper;
+import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.InputSplit;
@@ -274,7 +274,8 @@ public class CqlRecordReader extends RecordReader<Long, Row>
             {
                 for (String column : partitionBoundColumns.keySet())
                 {
-                    if (BytesType.bytesCompare(keyColumns.get(column), previousRowKey.get(column)) != 0)
+                    // this is not correct - but we don't seem to have easy access to better type information here
+                    if (ByteBufferUtil.compareUnsigned(keyColumns.get(column), previousRowKey.get(column)) != 0)
                     {
                         previousRowKey = keyColumns;
                         totalRead++;
@@ -567,7 +568,7 @@ public class CqlRecordReader extends RecordReader<Long, Row>
         String query = "SELECT column_name, component_index, type FROM system.schema_columns WHERE keyspace_name='" +
                        keyspace + "' and columnfamily_name='" + cfName + "'";
         List<Row> rows = session.execute(query).all();
-        if (CollectionUtils.isEmpty(rows))
+        if (rows.isEmpty())
         {
             throw new RuntimeException("No table metadata found for " + keyspace + "." + cfName);
         }

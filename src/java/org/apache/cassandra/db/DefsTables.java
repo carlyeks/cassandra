@@ -25,6 +25,7 @@ import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.MapDifference;
 import com.google.common.collect.Maps;
+import org.apache.cassandra.db.commitlog.CommitLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,10 +33,11 @@ import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.KSMetaData;
 import org.apache.cassandra.config.Schema;
+import org.apache.cassandra.config.UTMetaData;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.db.marshal.AsciiType;
-import org.apache.cassandra.db.marshal.UTF8Type;
+import org.apache.cassandra.db.marshal.UserType;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.service.StorageService;
@@ -72,7 +74,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
  *
  * Where <key> is a name of keyspace e.g. "ks".
  *
- * Column names where made composite to support 3-level nesting which represents following structure:
+ * Cell names where made composite to support 3-level nesting which represents following structure:
  * "ColumnFamily name":"column name":"column attribute" => "value"
  *
  * Example of schema (using CLI):
@@ -121,30 +123,17 @@ public class DefsTables
     {
         List<Row> serializedSchema = SystemKeyspace.serializedSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF);
 
-        List<KSMetaData> keyspaces = new ArrayList<KSMetaData>(serializedSchema.size());
+        List<KSMetaData> keyspaces = new ArrayList<>(serializedSchema.size());
 
         for (Row row : serializedSchema)
         {
             if (Schema.invalidSchemaRow(row) || Schema.ignoredSchemaRow(row))
                 continue;
 
-            keyspaces.add(KSMetaData.fromSchema(row, serializedColumnFamilies(row.key)));
+            keyspaces.add(KSMetaData.fromSchema(row, serializedColumnFamilies(row.key), serializedUserTypes(row.key)));
         }
 
         return keyspaces;
-    }
-
-    public static ByteBuffer searchComposite(String name, boolean start)
-    {
-        assert name != null;
-        ByteBuffer nameBytes = UTF8Type.instance.decompose(name);
-        int length = nameBytes.remaining();
-        byte[] bytes = new byte[2 + length + 1];
-        bytes[0] = (byte)((length >> 8) & 0xFF);
-        bytes[1] = (byte)(length & 0xFF);
-        ByteBufferUtil.arrayCopy(nameBytes, 0, bytes, 2, length);
-        bytes[bytes.length - 1] = (byte)(start ? 0 : 1);
-        return ByteBuffer.wrap(bytes);
     }
 
     private static Row serializedColumnFamilies(DecoratedKey ksNameKey)
@@ -155,8 +144,16 @@ public class DefsTables
                                                                                          System.currentTimeMillis())));
     }
 
+    private static Row serializedUserTypes(DecoratedKey ksNameKey)
+    {
+        ColumnFamilyStore cfsStore = SystemKeyspace.schemaCFS(SystemKeyspace.SCHEMA_USER_TYPES_CF);
+        return new Row(ksNameKey, cfsStore.getColumnFamily(QueryFilter.getIdentityFilter(ksNameKey,
+                                                                                         SystemKeyspace.SCHEMA_USER_TYPES_CF,
+                                                                                         System.currentTimeMillis())));
+    }
+
     /**
-     * Merge remote schema in form of row mutations with local and mutate ks/cf metadata objects
+     * Merge remote schema in form of mutations with local and mutate ks/cf metadata objects
      * (which also involves fs operations on add/drop ks/cf)
      *
      * @param mutations the schema changes to apply
@@ -164,30 +161,42 @@ public class DefsTables
      * @throws ConfigurationException If one of metadata attributes has invalid value
      * @throws IOException If data was corrupted during transportation or failed to apply fs operations
      */
-    public static synchronized void mergeSchema(Collection<RowMutation> mutations) throws ConfigurationException, IOException
+    public static synchronized void mergeSchema(Collection<Mutation> mutations) throws ConfigurationException, IOException
     {
-        // current state of the schema
-        Map<DecoratedKey, ColumnFamily> oldKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF);
-        Map<DecoratedKey, ColumnFamily> oldColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF);
+        mergeSchemaInternal(mutations, true);
+        Schema.instance.updateVersionAndAnnounce();
+    }
 
-        for (RowMutation mutation : mutations)
+    public static synchronized void mergeSchemaInternal(Collection<Mutation> mutations, boolean doFlush) throws ConfigurationException, IOException
+    {
+        // compare before/after schemas of the affected keyspaces only
+        Set<String> keyspaces = new HashSet<>(mutations.size());
+        for (Mutation mutation : mutations)
+            keyspaces.add(ByteBufferUtil.string(mutation.key()));
+
+        // current state of the schema
+        Map<DecoratedKey, ColumnFamily> oldKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF, keyspaces);
+        Map<DecoratedKey, ColumnFamily> oldColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF, keyspaces);
+        Map<DecoratedKey, ColumnFamily> oldTypes = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_USER_TYPES_CF, keyspaces);
+
+        for (Mutation mutation : mutations)
             mutation.apply();
 
-        if (!StorageService.instance.isClientMode())
+        if (doFlush && !StorageService.instance.isClientMode())
             flushSchemaCFs();
 
         // with new data applied
-        Map<DecoratedKey, ColumnFamily> newKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF);
-        Map<DecoratedKey, ColumnFamily> newColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF);
+        Map<DecoratedKey, ColumnFamily> newKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF, keyspaces);
+        Map<DecoratedKey, ColumnFamily> newColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF, keyspaces);
+        Map<DecoratedKey, ColumnFamily> newTypes = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_USER_TYPES_CF, keyspaces);
 
         Set<String> keyspacesToDrop = mergeKeyspaces(oldKeyspaces, newKeyspaces);
         mergeColumnFamilies(oldColumnFamilies, newColumnFamilies);
+        mergeTypes(oldTypes, newTypes);
 
         // it is safe to drop a keyspace only when all nested ColumnFamilies where deleted
         for (String keyspaceToDrop : keyspacesToDrop)
             dropKeyspace(keyspaceToDrop);
-
-        Schema.instance.updateVersionAndAnnounce();
     }
 
     private static Set<String> mergeKeyspaces(Map<DecoratedKey, ColumnFamily> before, Map<DecoratedKey, ColumnFamily> after)
@@ -209,26 +218,26 @@ public class DefsTables
         MapDifference<DecoratedKey, ColumnFamily> diff = Maps.difference(before, after);
 
         for (Map.Entry<DecoratedKey, ColumnFamily> entry : diff.entriesOnlyOnRight().entrySet())
-            if (entry.getValue().getColumnCount() > 0)
+            if (entry.getValue().hasColumns())
                 created.add(new Row(entry.getKey(), entry.getValue()));
 
         for (Map.Entry<DecoratedKey, MapDifference.ValueDifference<ColumnFamily>> entry : diff.entriesDiffering().entrySet())
         {
-            String keyspaceName = AsciiType.instance.compose(entry.getKey().key);
+            String keyspaceName = AsciiType.instance.compose(entry.getKey().getKey());
 
             ColumnFamily pre  = entry.getValue().leftValue();
             ColumnFamily post = entry.getValue().rightValue();
 
-            if (pre.getColumnCount() > 0 && post.getColumnCount() > 0)
+            if (pre.hasColumns() && post.hasColumns())
                 altered.add(keyspaceName);
-            else if (pre.getColumnCount() > 0)
+            else if (pre.hasColumns())
                 dropped.add(keyspaceName);
-            else if (post.getColumnCount() > 0) // a (re)created keyspace
+            else if (post.hasColumns()) // a (re)created keyspace
                 created.add(new Row(entry.getKey(), post));
         }
 
         for (Row row : created)
-            addKeyspace(KSMetaData.fromSchema(row, Collections.<CFMetaData>emptyList()));
+            addKeyspace(KSMetaData.fromSchema(row, Collections.<CFMetaData>emptyList(), new UTMetaData()));
         for (String name : altered)
             updateKeyspace(name);
         return dropped;
@@ -244,21 +253,21 @@ public class DefsTables
         MapDifference<DecoratedKey, ColumnFamily> diff = Maps.difference(before, after);
 
         for (Map.Entry<DecoratedKey, ColumnFamily> entry : diff.entriesOnlyOnRight().entrySet())
-            if (entry.getValue().getColumnCount() > 0)
+            if (entry.getValue().hasColumns())
                 created.addAll(KSMetaData.deserializeColumnFamilies(new Row(entry.getKey(), entry.getValue())).values());
 
         for (Map.Entry<DecoratedKey, MapDifference.ValueDifference<ColumnFamily>> entry : diff.entriesDiffering().entrySet())
         {
-            String keyspaceName = AsciiType.instance.compose(entry.getKey().key);
+            String keyspaceName = AsciiType.instance.compose(entry.getKey().getKey());
 
             ColumnFamily pre  = entry.getValue().leftValue();
             ColumnFamily post = entry.getValue().rightValue();
 
-            if (pre.getColumnCount() > 0 && post.getColumnCount() > 0)
+            if (pre.hasColumns() && post.hasColumns())
             {
                 MapDifference<String, CFMetaData> delta =
-                    Maps.difference(Schema.instance.getKSMetaData(keyspaceName).cfMetaData(),
-                                    KSMetaData.deserializeColumnFamilies(new Row(entry.getKey(), post)));
+                        Maps.difference(Schema.instance.getKSMetaData(keyspaceName).cfMetaData(),
+                                        KSMetaData.deserializeColumnFamilies(new Row(entry.getKey(), post)));
 
                 dropped.addAll(delta.entriesOnlyOnLeft().values());
                 created.addAll(delta.entriesOnlyOnRight().values());
@@ -270,11 +279,11 @@ public class DefsTables
                     }
                 }));
             }
-            else if (pre.getColumnCount() > 0)
+            else if (pre.hasColumns())
             {
                 dropped.addAll(Schema.instance.getKSMetaData(keyspaceName).cfMetaData().values());
             }
-            else if (post.getColumnCount() > 0)
+            else if (post.hasColumns())
             {
                 created.addAll(KSMetaData.deserializeColumnFamilies(new Row(entry.getKey(), post)).values());
             }
@@ -286,6 +295,61 @@ public class DefsTables
             updateColumnFamily(cfm.ksName, cfm.cfName);
         for (CFMetaData cfm : dropped)
             dropColumnFamily(cfm.ksName, cfm.cfName);
+    }
+
+    // see the comments for mergeKeyspaces()
+    private static void mergeTypes(Map<DecoratedKey, ColumnFamily> before, Map<DecoratedKey, ColumnFamily> after)
+    {
+        List<UserType> created = new ArrayList<>();
+        List<UserType> altered = new ArrayList<>();
+        List<UserType> dropped = new ArrayList<>();
+
+        MapDifference<DecoratedKey, ColumnFamily> diff = Maps.difference(before, after);
+
+        // New keyspace with types
+        for (Map.Entry<DecoratedKey, ColumnFamily> entry : diff.entriesOnlyOnRight().entrySet())
+            if (entry.getValue().hasColumns())
+                created.addAll(UTMetaData.fromSchema(new Row(entry.getKey(), entry.getValue())).values());
+
+        for (Map.Entry<DecoratedKey, MapDifference.ValueDifference<ColumnFamily>> entry : diff.entriesDiffering().entrySet())
+        {
+            String keyspaceName = AsciiType.instance.compose(entry.getKey().getKey());
+
+            ColumnFamily pre  = entry.getValue().leftValue();
+            ColumnFamily post = entry.getValue().rightValue();
+
+            if (pre.hasColumns() && post.hasColumns())
+            {
+                MapDifference<ByteBuffer, UserType> delta =
+                        Maps.difference(Schema.instance.getKSMetaData(keyspaceName).userTypes.getAllTypes(),
+                                        UTMetaData.fromSchema(new Row(entry.getKey(), post)));
+
+                dropped.addAll(delta.entriesOnlyOnLeft().values());
+                created.addAll(delta.entriesOnlyOnRight().values());
+                Iterables.addAll(altered, Iterables.transform(delta.entriesDiffering().values(), new Function<MapDifference.ValueDifference<UserType>, UserType>()
+                {
+                    public UserType apply(MapDifference.ValueDifference<UserType> pair)
+                    {
+                        return pair.rightValue();
+                    }
+                }));
+            }
+            else if (pre.hasColumns())
+            {
+                dropped.addAll(Schema.instance.getKSMetaData(keyspaceName).userTypes.getAllTypes().values());
+            }
+            else if (post.hasColumns())
+            {
+                created.addAll(UTMetaData.fromSchema(new Row(entry.getKey(), post)).values());
+            }
+        }
+
+        for (UserType type : created)
+            addType(type);
+        for (UserType type : altered)
+            updateType(type);
+        for (UserType type : dropped)
+            dropType(type);
     }
 
     private static void addKeyspace(KSMetaData ksm)
@@ -306,7 +370,7 @@ public class DefsTables
         KSMetaData ksm = Schema.instance.getKSMetaData(cfm.ksName);
         ksm = KSMetaData.cloneWith(ksm, Iterables.concat(ksm.cfMetaData().values(), Collections.singleton(cfm)));
 
-        logger.info("Loading " + cfm);
+        logger.info("Loading {}", cfm);
 
         Schema.instance.load(cfm);
 
@@ -321,6 +385,19 @@ public class DefsTables
             Keyspace.open(ksm.name).initCf(cfm.cfId, cfm.cfName, true);
             MigrationManager.instance.notifyCreateColumnFamily(cfm);
         }
+    }
+
+    private static void addType(UserType ut)
+    {
+        KSMetaData ksm = Schema.instance.getKSMetaData(ut.keyspace);
+        assert ksm != null;
+
+        logger.info("Loading {}", ut);
+
+        ksm.userTypes.addType(ut);
+
+        if (!StorageService.instance.isClientMode())
+            MigrationManager.instance.notifyCreateUserType(ut);
     }
 
     private static void updateKeyspace(String ksName)
@@ -352,6 +429,19 @@ public class DefsTables
         }
     }
 
+    private static void updateType(UserType ut)
+    {
+        KSMetaData ksm = Schema.instance.getKSMetaData(ut.keyspace);
+        assert ksm != null;
+
+        logger.info("Updating {}", ut);
+
+        ksm.userTypes.addType(ut);
+
+        if (!StorageService.instance.isClientMode())
+            MigrationManager.instance.notifyUpdateUserType(ut);
+    }
+
     private static void dropKeyspace(String ksName)
     {
         KSMetaData ksm = Schema.instance.getKSMetaData(ksName);
@@ -359,10 +449,13 @@ public class DefsTables
 
         CompactionManager.instance.interruptCompactionFor(ksm.cfMetaData().values(), true);
 
+        Keyspace keyspace = Keyspace.open(ksm.name);
+
         // remove all cfs from the keyspace instance.
+        List<UUID> droppedCfs = new ArrayList<>();
         for (CFMetaData cfm : ksm.cfMetaData().values())
         {
-            ColumnFamilyStore cfs = Keyspace.open(ksm.name).getColumnFamilyStore(cfm.cfName);
+            ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(cfm.cfName);
 
             Schema.instance.purge(cfm);
 
@@ -372,11 +465,19 @@ public class DefsTables
                     cfs.snapshot(snapshotName);
                 Keyspace.open(ksm.name).dropCf(cfm.cfId);
             }
+
+            droppedCfs.add(cfm.cfId);
         }
 
         // remove the keyspace from the static instances.
         Keyspace.clear(ksm.name);
         Schema.instance.clearKeyspaceDefinition(ksm);
+
+        keyspace.writeOrder.awaitNewBarrier();
+
+        // force a new segment in the CL
+        CommitLog.instance.forceRecycleAllSegments(droppedCfs);
+
         if (!StorageService.instance.isClientMode())
         {
             MigrationManager.instance.notifyDropKeyspace(ksm);
@@ -404,13 +505,26 @@ public class DefsTables
                 cfs.snapshot(Keyspace.getTimestampedSnapshotName(cfs.name));
             Keyspace.open(ksm.name).dropCf(cfm.cfId);
             MigrationManager.instance.notifyDropColumnFamily(cfm);
+
+            CommitLog.instance.forceRecycleAllSegments(Collections.singleton(cfm.cfId));
         }
+    }
+
+    private static void dropType(UserType ut)
+    {
+        KSMetaData ksm = Schema.instance.getKSMetaData(ut.keyspace);
+        assert ksm != null;
+
+        ksm.userTypes.removeType(ut);
+
+        if (!StorageService.instance.isClientMode())
+            MigrationManager.instance.notifyDropUserType(ut);
     }
 
     private static KSMetaData makeNewKeyspaceDefinition(KSMetaData ksm, CFMetaData toExclude)
     {
         // clone ksm but do not include the new def
-        List<CFMetaData> newCfs = new ArrayList<CFMetaData>(ksm.cfMetaData().values());
+        List<CFMetaData> newCfs = new ArrayList<>(ksm.cfMetaData().values());
         newCfs.remove(toExclude);
         assert newCfs.size() == ksm.cfMetaData().size() - 1;
         return KSMetaData.cloneWith(ksm, newCfs);
@@ -418,10 +532,8 @@ public class DefsTables
 
     private static void flushSchemaCFs()
     {
-        SystemKeyspace.forceBlockingFlush(SystemKeyspace.SCHEMA_KEYSPACES_CF);
-        SystemKeyspace.forceBlockingFlush(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF);
-        SystemKeyspace.forceBlockingFlush(SystemKeyspace.SCHEMA_COLUMNS_CF);
-        SystemKeyspace.forceBlockingFlush(SystemKeyspace.SCHEMA_TRIGGERS_CF);
+        for (String cf : SystemKeyspace.allSchemaCfs)
+            SystemKeyspace.forceBlockingFlush(cf);
     }
 }
 

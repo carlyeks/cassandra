@@ -22,9 +22,11 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.util.*;
 
-import org.apache.cassandra.hadoop.HadoopCompat;
-import org.apache.cassandra.cql3.CFDefinition;
-import org.apache.cassandra.db.Column;
+import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.db.BufferCell;
+import org.apache.cassandra.db.composites.CellNames;
+import org.apache.cassandra.db.Cell;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.hadoop.*;
@@ -54,7 +56,6 @@ import org.slf4j.LoggerFactory;
 public class CqlStorage extends AbstractCassandraStorage
 {
     private static final Logger logger = LoggerFactory.getLogger(CqlStorage.class);
-
     private RecordReader<Map<String, ByteBuffer>, Map<String, ByteBuffer>> reader;
     protected RecordWriter<Map<String, ByteBuffer>, List<ByteBuffer>> writer;
 
@@ -111,9 +112,9 @@ public class CqlStorage extends AbstractCassandraStorage
                 ByteBuffer columnValue = columns.get(ByteBufferUtil.string(cdef.name.duplicate()));
                 if (columnValue != null)
                 {
-                    Column column = new Column(cdef.name, columnValue);
-                    AbstractType<?> validator = getValidatorMap(cfDef).get(column.name());
-                    setTupleValue(tuple, i, cqlColumnToObj(column, cfDef), validator);
+                    Cell cell = new BufferCell(CellNames.simpleDense(cdef.name), columnValue);
+                    AbstractType<?> validator = getValidatorMap(cfDef).get(cdef.name);
+                    setTupleValue(tuple, i, cqlColumnToObj(cell, cfDef), validator);
                 }
                 else
                     tuple.set(i, null);
@@ -182,14 +183,15 @@ public class CqlStorage extends AbstractCassandraStorage
     }
 
     /** convert a cql column to an object */
-    protected Object cqlColumnToObj(Column col, CfDef cfDef) throws IOException
+    protected Object cqlColumnToObj(Cell col, CfDef cfDef) throws IOException
     {
         // standard
         Map<ByteBuffer,AbstractType> validators = getValidatorMap(cfDef);
-        if (validators.get(col.name()) == null)
+        ByteBuffer cellName = col.name().toByteBuffer();
+        if (validators.get(cellName) == null)
             return cassandraToObj(getDefaultMarshallers(cfDef).get(MarshallerType.DEFAULT_VALIDATOR), col.value());
         else
-            return cassandraToObj(validators.get(col.name()), col.value());
+            return cassandraToObj(validators.get(cellName), col.value());
     }
 
     /** set read configuration settings */
@@ -520,18 +522,18 @@ public class CqlStorage extends AbstractCassandraStorage
             // classic thrift tables
             if (keys.size() == 0)
             {
-                CFDefinition cfDefinition = getCfDefinition(keyspace, column_family, client);
-                for (CFDefinition.Name column : cfDefinition.partitionKeys())
+                CFMetaData cfm = getCFMetaData(keyspace, column_family, client);
+                for (ColumnDefinition def : cfm.partitionKeyColumns())
                 {
-                    String key = column.name.toString();
+                    String key = def.name.toString();
                     logger.debug("name: {} ", key);
                     ColumnDef cDef = new ColumnDef();
                     cDef.name = ByteBufferUtil.bytes(key);
                     keys.add(cDef);
                 }
-                for (CFDefinition.Name column : cfDefinition.clusteringColumns())
+                for (ColumnDefinition def : cfm.clusteringColumns())
                 {
-                    String key = column.name.toString();
+                    String key = def.name.toString();
                     logger.debug("name: {} ", key);
                     ColumnDef cDef = new ColumnDef();
                     cDef.name = ByteBufferUtil.bytes(key);

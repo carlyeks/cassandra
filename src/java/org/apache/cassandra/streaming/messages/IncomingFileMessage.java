@@ -21,12 +21,13 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
-import java.nio.channels.WritableByteChannel;
 
 import org.apache.cassandra.io.sstable.SSTableWriter;
+import org.apache.cassandra.io.util.DataOutputStreamAndChannel;
 import org.apache.cassandra.streaming.StreamReader;
 import org.apache.cassandra.streaming.StreamSession;
 import org.apache.cassandra.streaming.compress.CompressedStreamReader;
+import org.apache.cassandra.utils.JVMStabilityInspector;
 
 /**
  * IncomingFileMessage is used to receive the part(or whole) of a SSTable data file.
@@ -46,14 +47,15 @@ public class IncomingFileMessage extends StreamMessage
             {
                 return new IncomingFileMessage(reader.read(in), header);
             }
-            catch (Throwable e)
+            catch (Throwable t)
             {
-                session.doRetry(header, e);
+                JVMStabilityInspector.inspectThrowable(t);
+                session.doRetry(header, t);
                 return null;
             }
         }
 
-        public void serialize(IncomingFileMessage message, WritableByteChannel out, int version, StreamSession session) throws IOException
+        public void serialize(IncomingFileMessage message, DataOutputStreamAndChannel out, int version, StreamSession session) throws IOException
         {
             throw new UnsupportedOperationException("Not allowed to call serialize on an incoming file");
         }

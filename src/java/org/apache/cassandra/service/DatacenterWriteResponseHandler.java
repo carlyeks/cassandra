@@ -45,8 +45,7 @@ public class DatacenterWriteResponseHandler extends WriteResponseHandler
     public void response(MessageIn message)
     {
         if (message == null || consistencyLevel.isLocal(message.from))
-            if (responses.decrementAndGet() == 0)
-                signal();
+            super.response(message);
     }
 
     @Override

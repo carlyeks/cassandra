@@ -25,7 +25,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.QueryOptions;
@@ -33,7 +32,6 @@ import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -73,10 +71,10 @@ public class CassandraAuthorizer implements IAuthorizer
         try
         {
             ResultMessage.Rows rows = authorizeStatement.execute(QueryState.forInternalCalls(),
-                                                                 new QueryOptions(ConsistencyLevel.LOCAL_ONE,
-                                                                                  Lists.newArrayList(ByteBufferUtil.bytes(user.getName()),
-                                                                                                     ByteBufferUtil.bytes(resource.getName()))));
-            result = new UntypedResultSet(rows.result);
+                                                                 QueryOptions.forInternalCalls(ConsistencyLevel.LOCAL_ONE,
+                                                                                               Lists.newArrayList(ByteBufferUtil.bytes(user.getName()),
+                                                                                                                  ByteBufferUtil.bytes(resource.getName()))));
+            result = UntypedResultSet.create(rows.result);
         }
         catch (RequestValidationException e)
         {
@@ -187,7 +185,7 @@ public class CassandraAuthorizer implements IAuthorizer
         {
             process(String.format("DELETE FROM %s.%s WHERE username = '%s'", Auth.AUTH_KS, PERMISSIONS_CF, escape(droppedUser)));
         }
-        catch (Throwable e)
+        catch (RequestExecutionException e)
         {
             logger.warn("CassandraAuthorizer failed to revoke all permissions of {}: {}", droppedUser, e);
         }
@@ -206,7 +204,7 @@ public class CassandraAuthorizer implements IAuthorizer
                                          PERMISSIONS_CF,
                                          escape(droppedResource.getName())));
         }
-        catch (Throwable e)
+        catch (RequestExecutionException e)
         {
             logger.warn("CassandraAuthorizer failed to revoke all permissions on {}: {}", droppedResource, e);
             return;
@@ -222,7 +220,7 @@ public class CassandraAuthorizer implements IAuthorizer
                                       escape(row.getString(USERNAME)),
                                       escape(droppedResource.getName())));
             }
-            catch (Throwable e)
+            catch (RequestExecutionException e)
             {
                 logger.warn("CassandraAuthorizer failed to revoke all permissions on {}: {}", droppedResource, e);
             }
@@ -240,17 +238,7 @@ public class CassandraAuthorizer implements IAuthorizer
 
     public void setup()
     {
-        if (Schema.instance.getCFMetaData(Auth.AUTH_KS, PERMISSIONS_CF) == null)
-        {
-            try
-            {
-                process(PERMISSIONS_CF_SCHEMA);
-            }
-            catch (RequestExecutionException e)
-            {
-                throw new AssertionError(e);
-            }
-        }
+        Auth.setupTable(PERMISSIONS_CF, PERMISSIONS_CF_SCHEMA);
 
         try
         {

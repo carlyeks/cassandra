@@ -18,6 +18,7 @@
 if "%OS%" == "Windows_NT" setlocal
 
 set ARG=%1
+if /i "%ARG%" == "LEGACY" goto runLegacy
 set INSTALL="INSTALL"
 set UNINSTALL="UNINSTALL"
 
@@ -25,14 +26,37 @@ pushd %~dp0..
 if NOT DEFINED CASSANDRA_HOME set CASSANDRA_HOME=%CD%
 popd
 
+REM -----------------------------------------------------------------------------
+REM See if we have access to run unsigned powershell scripts
+for /F "delims=" %%i in ('powershell Get-ExecutionPolicy') do set PERMISSION=%%i
+if "%PERMISSION%" == "Unrestricted" goto runPowerShell
+goto runLegacy
+
+REM -----------------------------------------------------------------------------
+:runPowerShell
+echo Detected powershell execution permissions.  Running with enhanced startup scripts.
+set errorlevel=
+powershell /file "%CASSANDRA_HOME%\bin\cassandra.ps1" %*
+exit /b %errorlevel%
+
+REM -----------------------------------------------------------------------------
+:runLegacy
+echo WARNING! Powershell script execution unavailable.
+echo    Please use 'powershell Set-ExecutionPolicy Unrestricted'
+echo    on this user-account to run cassandra with fully featured
+echo    functionality on this platform.
+
+echo Starting with legacy startup options
+
 if NOT DEFINED CASSANDRA_MAIN set CASSANDRA_MAIN=org.apache.cassandra.service.CassandraDaemon
 if NOT DEFINED JAVA_HOME goto :err
 
-REM ***** JAVA options *****
+REM -----------------------------------------------------------------------------
+REM JVM Opts we'll use in legacy run or installation
 set JAVA_OPTS=-ea^
- -javaagent:"%CASSANDRA_HOME%\lib\jamm-0.2.5.jar"^
- -Xms1G^
- -Xmx1G^
+ -javaagent:"%CASSANDRA_HOME%\lib\jamm-0.2.6.jar"^
+ -Xms2G^
+ -Xmx2G^
  -XX:+HeapDumpOnOutOfMemoryError^
  -XX:+UseParNewGC^
  -XX:+UseConcMarkSweepGC^
@@ -44,11 +68,9 @@ set JAVA_OPTS=-ea^
  -Dcom.sun.management.jmxremote.port=7199^
  -Dcom.sun.management.jmxremote.ssl=false^
  -Dcom.sun.management.jmxremote.authenticate=false^
- -Dlog4j.configuration=log4j-server.properties^
- -Dlog4j.defaultInitOverride=true
+ -Dlogback.configurationFile=logback.xml
 
 REM ***** CLASSPATH library setting *****
-
 REM Ensure that any user defined CLASSPATH variables are not used on startup
 set CLASSPATH="%CASSANDRA_HOME%\conf"
 
@@ -60,28 +82,27 @@ goto okClasspath
 set CLASSPATH=%CLASSPATH%;%1
 goto :eof
 
+REM -----------------------------------------------------------------------------
 :okClasspath
 REM Include the build\classes\main directory so it works in development
 set CASSANDRA_CLASSPATH=%CLASSPATH%;"%CASSANDRA_HOME%\build\classes\main";"%CASSANDRA_HOME%\build\classes\thrift"
 set CASSANDRA_PARAMS=-Dcassandra -Dcassandra-foreground=yes
+set CASSANDRA_PARAMS=%CASSANDRA_PARAMS% -Dcassandra.logdir="%CASSANDRA_HOME%\logs"
+set CASSANDRA_PARAMS=%CASSANDRA_PARAMS% -Dcassandra.storagedir="%CASSANDRA_HOME%\data"
+
 if /i "%ARG%" == "INSTALL" goto doInstallOperation
 if /i "%ARG%" == "UNINSTALL" goto doInstallOperation
-goto runDaemon
 
-
-:runDaemon
 echo Starting Cassandra Server
 "%JAVA_HOME%\bin\java" %JAVA_OPTS% %CASSANDRA_PARAMS% -cp %CASSANDRA_CLASSPATH% "%CASSANDRA_MAIN%"
 goto finally
 
+REM -----------------------------------------------------------------------------
 :doInstallOperation
 set SERVICE_JVM="cassandra"
 rem location of Prunsrv
 set PATH_PRUNSRV=%CASSANDRA_HOME%\bin\daemon\
 set PR_LOGPATH=%PATH_PRUNSRV%
-
-rem fix up java ops replace ' -' with ' ;-'
-set JAVA_OPTS_DELM=%JAVA_OPTS: -=;-%
 
 rem Allow prunsrv to be overridden
 if "%PRUNSRV%" == "" set PRUNSRV=%PATH_PRUNSRV%prunsrv
@@ -91,19 +112,38 @@ echo trying to delete service if it has been created already
 rem quit if we're just going to uninstall
 if /i "%ARG%" == "UNINSTALL" goto finally
 
-echo.
 echo Installing %SERVICE_JVM%. If you get registry warnings, re-run as an Administrator
 "%PRUNSRV%" //IS//%SERVICE_JVM%
-echo Setting the parameters for %SERVICE_JVM%
-rem set PR_CLASSPATH=%CASSANDRA_CLASSPATH%
-"%PRUNSRV%" //US//%SERVICE_JVM% ^
+
+echo Setting startup parameters for %SERVICE_JVM%
+set cmd="%PRUNSRV%" //US//%SERVICE_JVM% ^
  --Jvm=auto --StdOutput auto --StdError auto ^
  --Classpath=%CASSANDRA_CLASSPATH% ^
  --StartMode=jvm --StartClass=%CASSANDRA_MAIN% --StartMethod=main ^
- --StopMode=jvm --StopClass=%CASSANDRA_MAIN%  --StopMethod=stop ^
- ++JvmOptions=%JAVA_OPTS_DELM% ++JvmOptions=-DCassandra ^
- --PidFile pid.txt
- 
+ --StopMode=jvm --StopClass=%CASSANDRA_MAIN%  --StopMethod=stop
+
+REM convert ' -' into ';-' so we can tokenize on semicolon as we may have spaces in folder names
+set tempOptions=%JAVA_OPTS: -=;-%
+REM Append the JAVA_OPTS, each with independent ++JvmOptions as delimited list fails for some options
+:optStrip
+for /F "tokens=1* delims=;" %%a in ("%tempOptions%") do (
+    set JVMOPTIONS=%JVMOPTIONS% ++JvmOptions=%%a
+    set tempOptions=%%b
+)
+if defined tempOptions goto :optStrip
+
+REM do the same for CASSANDRA_PARAMS
+set tempOptions=%CASSANDRA_PARAMS: -=;-%
+
+:paramStrip
+for /F "tokens=1* delims=;" %%a in ("%tempOptions%") do (
+    set JVMOPTIONS=%JVMOPTIONS% ++JvmOptions=%%a
+    set tempOptions=%%b
+)
+if defined tempOptions goto :paramStrip
+
+%cmd% %JVMOPTIONS%
+
 echo Installation of %SERVICE_JVM% is complete
 goto finally
 
@@ -111,6 +151,7 @@ goto finally
 echo JAVA_HOME environment variable must be set!
 pause
 
+REM -----------------------------------------------------------------------------
 :finally
 
 ENDLOCAL
