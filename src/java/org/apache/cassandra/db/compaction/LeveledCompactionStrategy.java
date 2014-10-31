@@ -61,7 +61,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
     public LeveledCompactionStrategy(ColumnFamilyStore cfs, Map<String, String> options)
     {
         super(cfs, options);
-        int configuredMaxSSTableSize = 160, configuredMaxOverlappingLevel = 0;
+        int configuredMaxSSTableSize = 160, configuredMaxOverlappingLevel = 2;
         SizeTieredCompactionStrategyOptions localOptions = new SizeTieredCompactionStrategyOptions(options);
         if (options != null)
         {
@@ -453,7 +453,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
         String level = options.containsKey(MAX_OVERLAPPING_LEVEL_OPTION)
                 ? options.get(MAX_OVERLAPPING_LEVEL_OPTION)
-                : "0";
+                : "2";
 
         try
         {
