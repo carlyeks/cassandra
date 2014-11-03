@@ -25,10 +25,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.datastax.driver.core.BatchStatement;
-import com.datastax.driver.core.BoundStatement;
-import com.datastax.driver.core.PreparedStatement;
-import com.datastax.driver.core.Statement;
+import com.datastax.driver.core.*;
+import com.google.common.base.Function;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.stress.generate.Distribution;
 import org.apache.cassandra.stress.generate.Partition;
@@ -56,6 +56,60 @@ public class SchemaInsert extends SchemaStatement
 
     private class JavaDriverRun extends Runner
     {
+        private class BatchExecutor
+        {
+            private List<ListenableFuture<Object>> futures = new ArrayList<>();
+            private List<BoundStatement> statements = new ArrayList<>();
+
+            public void add(BoundStatement statement)
+            {
+                if (batchType == BatchStatement.Type.UNLOGGED)
+                {
+                    futures.add(Futures.transform(client.getSession().executeAsync(statement), new Function<ResultSet, Object>()
+                    {
+                        @Override
+                        public Object apply(ResultSet rows)
+                        {
+                            validate(rows);
+                            return new Object();
+                        }
+                    }));
+                }
+                else
+                {
+                    if (statements.size() == 65535)
+                    {
+                        BatchStatement batch = new BatchStatement(batchType);
+                        batch.setConsistencyLevel(JavaDriverClient.from(cl));
+                        batch.addAll(statements);
+                        futures.add(Futures.transform(client.getSession().executeAsync(batch), new Function<ResultSet, Object>()
+                        {
+                            @Override
+                            public Object apply(ResultSet rows)
+                            {
+                                validate(rows);
+                                return new Object();
+                            }
+                        }));
+                        statements = new ArrayList<>();
+                    }
+                    statements.add(statement);
+                }
+            }
+
+            public ListenableFuture<Object> execute()
+            {
+                return Futures.transform(Futures.allAsList(futures), new Function<List<Object>, Object>()
+                {
+                    @Override
+                    public Object apply(List<Object> objects)
+                    {
+                        return new Object();
+                    }
+                });
+            }
+        }
+
         final JavaDriverClient client;
 
         private JavaDriverRun(JavaDriverClient client)
@@ -65,10 +119,10 @@ public class SchemaInsert extends SchemaStatement
 
         public boolean run() throws Exception
         {
+            BatchExecutor batchExecutor = new BatchExecutor();
             Partition.RowIterator[] iterators = new Partition.RowIterator[partitions.size()];
             for (int i = 0 ; i < iterators.length ; i++)
                 iterators[i] = partitions.get(i).iterator(selectChance.next(), true);
-            List<BoundStatement> stmts = new ArrayList<>();
             partitionCount = partitions.size();
 
             for (Partition.RowIterator iterator : iterators)
@@ -77,36 +131,13 @@ public class SchemaInsert extends SchemaStatement
                     continue;
 
                 for (Row row : iterator.next())
-                    stmts.add(bindRow(row));
-            }
-            rowCount += stmts.size();
-
-            // 65535 is max number of stmts per batch, so if we have more, we need to manually batch them
-            for (int j = 0 ; j < stmts.size() ; j += 65535)
-            {
-                List<BoundStatement> substmts = stmts.subList(j, Math.min(j + stmts.size(), j + 65535));
-                Statement stmt;
-                if (stmts.size() == 1)
                 {
-                    stmt = substmts.get(0);
-                }
-                else
-                {
-                    BatchStatement batch = new BatchStatement(batchType);
-                    batch.setConsistencyLevel(JavaDriverClient.from(cl));
-                    batch.addAll(substmts);
-                    stmt = batch;
-                }
-
-                try
-                {
-                    validate(client.getSession().execute(stmt));
-                }
-                catch (ClassCastException e)
-                {
-                    e.printStackTrace();
+                    rowCount++;
+                    batchExecutor.add(bindRow(row));
                 }
             }
+
+            batchExecutor.execute();
 
             for (Partition.RowIterator iterator : iterators)
                 iterator.markWriteFinished();

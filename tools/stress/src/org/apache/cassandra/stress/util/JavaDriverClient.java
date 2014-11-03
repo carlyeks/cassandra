@@ -23,9 +23,11 @@ import java.util.concurrent.ConcurrentMap;
 import javax.net.ssl.SSLContext;
 
 import com.datastax.driver.core.*;
+import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
 import com.datastax.driver.core.policies.WhiteListPolicy;
 import org.apache.cassandra.config.EncryptionOptions;
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.security.SSLFactory;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 import io.netty.util.internal.logging.Slf4JLoggerFactory;
@@ -132,6 +134,13 @@ public class JavaDriverClient
         stmt.setConsistencyLevel(from(consistency));
         BoundStatement bstmt = stmt.bind((Object[]) queryParams.toArray(new Object[queryParams.size()]));
         return getSession().execute(bstmt);
+    }
+
+    public ResultSetFuture executePreparedAsync(PreparedStatement stmt, List<Object> queryParams, org.apache.cassandra.db.ConsistencyLevel consistency)
+    {
+        stmt.setConsistencyLevel(from(consistency));
+        BoundStatement bstmt = stmt.bind((Object[])queryParams.toArray(new Object[queryParams.size()]));
+        return getSession().executeAsync(bstmt);
     }
 
     /**
