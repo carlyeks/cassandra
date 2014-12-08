@@ -2557,7 +2557,8 @@ public class NodeTool
         @Override
         public void execute(NodeProbe probe)
         {
-            for(Map.Entry<Integer, List<String>> entry: probe.getManifestDescription(args.get(0), args.get(1)).entrySet())
+            checkArgument(args.size() >= 2, "getmanifest requires ks, cf");
+            for(Map.Entry<String, List<String>> entry: probe.getManifestDescription(args.get(0), args.get(1)).entrySet())
             {
                 System.out.printf("%8s %-50s%n", entry.getKey(), entry.getValue());
             }

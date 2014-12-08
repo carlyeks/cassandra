@@ -87,7 +87,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         maxSSTableSizeInMB = configuredMaxSSTableSize;
         maxOverlappingLevel = configuredMaxOverlappingLevel;
 
-        manifest = LeveledManifest.create(cfs, this.maxSSTableSizeInMB, this.maxOverlappingLevel, localOptions);
+        manifest = new LeveledManifest(cfs, this.maxSSTableSizeInMB, this.maxOverlappingLevel, localOptions);
         logger.debug("Created {}", manifest);
     }
 

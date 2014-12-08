@@ -1074,7 +1074,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     }
 
     @Override
-    public Map<Integer, List<String>> getManifestDescription(String keyspace, String table)
+    public Map<String, List<String>> getManifestDescription(String keyspace, String table)
     {
         UUID cfId = Schema.instance.getId(keyspace, table);
         if (cfId == null)
@@ -1087,14 +1087,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             return Collections.emptyMap();
         }
 
-        CompactionManifest manifest = cfs.getCompactionManifest();
-        Map<Integer, List<String>> map = new HashMap<>();
-        if (manifest != null)
-        {
-            for (int i = 0; i <= manifest.getLevelCount(); i++)
-            {
-                map.put(i, manifest.getSSTables(i));
-            }
+        CompactionManifest manifest = cfs.getCompactionStrategy().getManifest();
+        Map<String, List<String>> map = new HashMap<>();
+        for (String level: manifest.getLevels()) {
+            map.put(level, manifest.getSSTables(level));
         }
         return map;
     }

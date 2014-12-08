@@ -390,7 +390,7 @@ public class LeveledManifest implements CompactionManifest
 
             if (last != null)
             {
-                if (last.last.compareTo(reader.first) < 0) {
+                if (last.last.compareTo(reader.first) > 0) {
                     overlaps++;
                 }
             }
@@ -597,7 +597,7 @@ public class LeveledManifest implements CompactionManifest
         {
             if (last != null)
             {
-                if (last.last.compareTo(newCandidate.first) < 0)
+                if (last.last.compareTo(newCandidate.first) > 0)
                 {
                     if (!candidates.contains(last))
                     {
@@ -781,9 +781,20 @@ public class LeveledManifest implements CompactionManifest
         return generations[i];
     }
 
-    public List<String> getSSTables(int level)
+    public List<String> getLevels()
     {
-        List<SSTableReader> generation = getLevel(level);
+        List<String> levels = new ArrayList<>();
+        for (int i = 0; i <= getLevelCount(); i++)
+        {
+            levels.add("L" + i);
+        }
+        return levels;
+    }
+
+
+    public List<String> getSSTables(String level)
+    {
+        List<SSTableReader> generation = getLevel(Integer.parseInt(level.substring(1)));
         List<String> sstables = new ArrayList<>(generation.size());
         for (int i = 0; i < generation.size(); i++)
         {

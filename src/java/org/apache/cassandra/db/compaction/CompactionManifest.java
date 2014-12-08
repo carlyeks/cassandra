@@ -21,7 +21,6 @@ import java.util.List;
 
 public interface CompactionManifest
 {
-    public int getLevelCount();
-    public List<String> getSSTables(int level);
-
+    public List<String> getLevels();
+    public List<String> getSSTables(String level);
 }
