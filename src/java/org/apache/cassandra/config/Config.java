@@ -136,6 +136,8 @@ public class Config
     public Integer concurrent_compactors;
     public volatile Integer compaction_throughput_mb_per_sec = 16;
 
+    public Integer default_max_overlapping_level = 0;
+
     public Integer max_streaming_retries = 3;
 
     public volatile Integer stream_throughput_outbound_megabits_per_sec = 200;
