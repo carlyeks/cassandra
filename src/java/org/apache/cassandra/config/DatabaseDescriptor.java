@@ -968,6 +968,11 @@ public class DatabaseDescriptor
         conf.compaction_throughput_mb_per_sec = value;
     }
 
+    public static int getDefaultMaxOverlappingLevel()
+    {
+        return conf.default_max_overlapping_level;
+    }
+
     public static boolean getDisableSTCSInL0()
     {
         return Boolean.getBoolean("cassandra.disable_stcs_in_l0");
