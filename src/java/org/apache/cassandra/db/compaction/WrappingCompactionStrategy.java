@@ -370,4 +370,44 @@ public final class WrappingCompactionStrategy extends AbstractCompactionStrategy
     {
         return Arrays.asList(repaired, unrepaired);
     }
+
+    @Override
+    public synchronized CompactionManifest getManifest()
+    {
+        final CompactionManifest unrepairedManifest = unrepaired.getManifest(), repairedManifest = repaired.getManifest();
+        return new CompactionManifest()
+        {
+            private static final String UNREPAIRED_PREFIX = "unrepaired-", REPAIRED_PREFIX = "repaired-";
+
+            @Override
+            public List<String> getLevels()
+            {
+                List<String> unrepairedLevels = unrepairedManifest.getLevels();
+                List<String> repairedLevels = repairedManifest.getLevels();
+
+                List<String> levels = new ArrayList<>(repairedLevels.size() + unrepairedLevels.size());
+
+                for (String unrepairedLevel : unrepairedLevels)
+                {
+                    levels.add(UNREPAIRED_PREFIX + unrepairedLevel);
+                }
+                for (String repairedLevel : repairedLevels)
+                {
+                    levels.add(REPAIRED_PREFIX + repairedLevel);
+                }
+                return levels;
+            }
+
+            @Override
+            public List<String> getSSTables(String level)
+            {
+                if (level.startsWith(UNREPAIRED_PREFIX))
+                {
+                    return unrepairedManifest.getSSTables(level.substring(UNREPAIRED_PREFIX.length()));
+                }
+                assert level.startsWith(REPAIRED_PREFIX) : "Unrecognized SSTable name";
+                return repairedManifest.getSSTables(level.substring(REPAIRED_PREFIX.length()));
+            }
+        };
+    }
 }
