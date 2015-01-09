@@ -267,6 +267,38 @@ public class LeveledManifest implements CompactionManifest
         return (long) bytes;
     }
 
+    private CompactionCandidate getCompactionCandidateForLevel(int level)
+    {
+        List<SSTableReader> sstables = getLevel(level);
+        if (sstables.isEmpty())
+            return null;
+
+        // we want to calculate score excluding compacting ones
+        Set<SSTableReader> sstablesInLevel = Sets.newHashSet(sstables);
+        Set<SSTableReader> remaining = Sets.difference(sstablesInLevel, cfs.getDataTracker().getCompacting());
+        double score = (double) SSTableReader.getTotalBytes(remaining) / (double) maxBytesForLevel(level);
+        logger.debug("Compaction score for level {} is {}", level, score);
+
+        if (score > 1.001)
+        {
+            Collection<SSTableReader> candidates = getCandidatesForUplevelCompaction(level);
+            if (!candidates.isEmpty())
+            {
+                int nextLevel = getNextLevel(candidates);
+                candidates = getOverlappingStarvedSSTables(nextLevel, candidates);
+                if (logger.isDebugEnabled())
+                    logger.debug("Compaction candidates for L{} are {}", level, toString(candidates));
+                return new CompactionCandidate(candidates, nextLevel, cfs.getCompactionStrategy().getMaxSSTableBytes());
+            }
+            else
+            {
+                logger.debug("No compaction candidates for L{}", level);
+            }
+        }
+
+        return null;
+    }
+
     /**
      * @return highest-priority sstables to compact, and level to compact them to
      * If no compactions are necessary, will return null
@@ -286,34 +318,18 @@ public class LeveledManifest implements CompactionManifest
             return null;
         }
 
-        for (int i = 0; i < generations.length; i++)
+        for (int i = 0; i < maxOverlappingLevel; i++)
         {
-            List<SSTableReader> sstables = getLevel(i);
-            if (sstables.isEmpty())
-                continue; // mostly this just avoids polluting the debug log with zero scores
+            CompactionCandidate candidate = getCompactionCandidateForLevel(i);
+            if (candidate != null)
+                return candidate;
+        }
 
-            // we want to calculate score excluding compacting ones
-            Set<SSTableReader> sstablesInLevel = Sets.newHashSet(sstables);
-            Set<SSTableReader> remaining = Sets.difference(sstablesInLevel, cfs.getDataTracker().getCompacting());
-            double score = (double) SSTableReader.getTotalBytes(remaining) / (double) maxBytesForLevel(i);
-            logger.debug("Compaction score for level {} is {}", i, score);
-
-            if (score > 1.001)
-            {
-                Collection<SSTableReader> candidates = getCandidatesForUplevelCompaction(i);
-                if (!candidates.isEmpty())
-                {
-                    int nextLevel = getNextLevel(candidates);
-                    candidates = getOverlappingStarvedSSTables(nextLevel, candidates);
-                    if (logger.isDebugEnabled())
-                        logger.debug("Compaction candidates for L{} are {}", i, toString(candidates));
-                    return new CompactionCandidate(candidates, nextLevel, cfs.getCompactionStrategy().getMaxSSTableBytes());
-                }
-                else
-                {
-                    logger.debug("No compaction candidates for L{}", i);
-                }
-            }
+        for (int i = generations.length - 1; i >= maxOverlappingLevel; i--)
+        {
+            CompactionCandidate candidate = getCompactionCandidateForLevel(i);
+            if (candidate != null)
+                return candidate;
         }
 
         // All levels are less than the maximum, so let's see if we should do a consolidating compaction in any
