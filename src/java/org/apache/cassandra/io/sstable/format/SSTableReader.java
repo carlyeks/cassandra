@@ -233,7 +233,7 @@ public abstract class SSTableReader extends SSTable
             String parentName = descriptor.cfname.substring(0, i);
             CFMetaData parent = Schema.instance.getCFMetaData(descriptor.ksname, parentName);
             ColumnDefinition def = parent.getColumnDefinitionForIndex(descriptor.cfname.substring(i + 1));
-            metadata = CFMetaData.newIndexMetadata(parent, def, SecondaryIndex.getIndexComparator(parent, def));
+            metadata = CFMetaData.newSecondaryIndexMetadata(parent, def, SecondaryIndex.getIndexComparator(parent, def));
         }
         else
         {
