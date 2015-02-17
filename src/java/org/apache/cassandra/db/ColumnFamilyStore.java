@@ -33,6 +33,7 @@ import com.google.common.base.*;
 import com.google.common.collect.*;
 import com.google.common.util.concurrent.*;
 
+import org.apache.cassandra.db.index.GlobalIndexManager;
 import org.json.simple.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -197,6 +198,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         scheduleFlush();
 
         indexManager.reload();
+
+        GlobalIndexManager.instance.reload(this);
 
         // If the CF comparator has changed, we need to change the memtable,
         // because the old one still aliases the previous comparator.
