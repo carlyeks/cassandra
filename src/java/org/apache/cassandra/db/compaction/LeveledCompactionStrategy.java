@@ -238,15 +238,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         {
             for (Integer level : byLevel.keySet())
             {
-                // level can be -1 when sstables are added to DataTracker but not to LeveledManifest
-                // since we don't know which level those sstable belong yet, we simply do the same as L0 sstables.
-                if (level <= 0)
-                {
-                    // L0 makes no guarantees about overlapping-ness.  Just create a direct scanner for each
-                    for (SSTableReader sstable : byLevel.get(level))
-                        scanners.add(sstable.getScanner(range, CompactionManager.instance.getRateLimiter()));
-                }
-                else if (level <= maxOverlappingLevel)
+                if (level <= maxOverlappingLevel)
                 {
                     List<SSTableReader> intersecting = LeveledScanner.intersecting(byLevel.get(level), range);
                     for (SSTableReader sstable : intersecting)
