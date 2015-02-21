@@ -1089,7 +1089,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         CompactionManifest manifest = cfs.getCompactionStrategy().getManifest();
         Map<String, List<String>> map = new HashMap<>();
-        for (String level: manifest.getLevels()) {
+        for (String level: manifest.getLevels())
+        {
             map.put(level, manifest.getSSTables(level));
         }
         return map;
