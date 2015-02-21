@@ -2552,7 +2552,7 @@ public class NodeTool
         }
     }
 
-    @Command(name = "getmanifest", description = "Show Leveled/Overlapping manifest")
+    @Command(name = "getmanifest", description = "Show compaction manifest")
     public static class GetManifest extends NodeToolCmd
     {
         @Arguments(usage = "<keyspace> <table>", description = "The keyspace and table name whose manifest should be output")
