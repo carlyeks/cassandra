@@ -832,8 +832,10 @@ public class LeveledManifest implements CompactionManifest
             for (int i = 0; i < getLevel(level).size(); i++)
             {
                 SSTableReader sstable = getLevel(level).get((start + i) % getLevel(level).size());
-                Set<SSTableReader> candidates = Sets.union(Collections.singleton(sstable),
-                                                           Sets.union(overlapping(sstable, getLevel(level)), overlapping(sstable, getLevel(level + 1))));
+
+                // Also take any overlapping sstables; there will only be overlaps when level = maxOverlappingLevel
+                Set<SSTableReader> levelCandidates = Sets.union(Collections.singleton(sstable), overlapping(sstable, getLevel(level)));
+                Set<SSTableReader> candidates = Sets.union(levelCandidates, overlapping(levelCandidates, getLevel(level + 1)));
                 if (Iterables.any(candidates, suspectP))
                     continue;
                 if (Sets.intersection(candidates, compacting).isEmpty())
