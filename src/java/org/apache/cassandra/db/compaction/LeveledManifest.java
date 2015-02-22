@@ -608,11 +608,24 @@ public class LeveledManifest implements CompactionManifest
         final Set<SSTableReader> compacting = cfs.getDataTracker().getCompacting();
         Set<SSTableReader> candidates = new HashSet<>();
 
-        Collection<SSTableReader> readers = getLevelSorted(level, SSTableReader.sstableComparator);
+        Collections.sort(getLevel(level), SSTableReader.sstableComparator);
+
+        int start = 0;
+        for (int i = 0; i < getLevel(level).size(); i++)
+        {
+            SSTableReader sstable = getLevel(level).get(i);
+            if (sstable.first.compareTo(lastCompactedKeys[level]) > 0)
+            {
+                start = i;
+                break;
+            }
+        }
 
         SSTableReader last = null;
-        for (final SSTableReader newCandidate: readers)
+        for (int i = 0; i < getLevel(level).size(); i++)
         {
+            SSTableReader newCandidate = getLevel(level).get((i + start) % getLevel(level).size());
+
             if (last != null)
             {
                 if (last.last.compareTo(newCandidate.first) > 0)
@@ -753,6 +766,7 @@ public class LeveledManifest implements CompactionManifest
         {
             // for non-overlapping compactions, pick up where we left off last time
             Collections.sort(getLevel(level), SSTableReader.sstableComparator);
+
             int start = 0; // handles case where the prior compaction touched the very last range
             for (int i = 0; i < getLevel(level).size(); i++)
             {
