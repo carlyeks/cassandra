@@ -25,7 +25,7 @@ import org.apache.cassandra.exceptions.RequestValidationException;
 
 public abstract class ParsedStatement
 {
-    private VariableSpecifications variables;
+    protected VariableSpecifications variables;
 
     public VariableSpecifications getBoundVariables()
     {
