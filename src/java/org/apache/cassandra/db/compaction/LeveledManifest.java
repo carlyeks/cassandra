@@ -623,7 +623,7 @@ public class LeveledManifest
         for (int i = generations.length - 1; i >= 0; i--)
         {
             List<SSTableReader> sstables = generations[i];
-            estimated[i] = Math.max(0L, SSTableReader.getTotalBytes(sstables) - maxBytesForLevel(i)) / maxSSTableSizeInBytes;
+            estimated[i] = Math.max(0L, SSTableReader.getTotalBytes(sstables) - maxBytesForLevel(i) * 1.001) / maxSSTableSizeInBytes;
             tasks += estimated[i];
         }
 
