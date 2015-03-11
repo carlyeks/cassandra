@@ -44,6 +44,7 @@ import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.GlobalIndexDefinition;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Directories;
@@ -51,6 +52,7 @@ import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
+import org.apache.cassandra.db.index.GlobalIndexManager;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
@@ -346,6 +348,15 @@ public class CassandraDaemon
             }
         };
         ScheduledExecutors.optionalTasks.schedule(runnable, 5 * 60, TimeUnit.SECONDS);
+
+        for (Keyspace keyspaceName : Keyspace.all())
+        {
+            for (CFMetaData cfm : keyspaceName.metadata.cfMetaData().values())
+            {
+                for (GlobalIndexDefinition indexDefinition : cfm.getGlobalIndexes().values())
+                    ScheduledExecutors.optionalTasks.execute(GlobalIndexManager.instance.build(cfm, indexDefinition));
+            }
+        }
 
         SystemKeyspace.finishStartup();
 
