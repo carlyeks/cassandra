@@ -29,6 +29,8 @@ import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.statements.Bound;
 import org.apache.cassandra.db.IndexExpression;
+import org.apache.cassandra.db.index.GlobalIndex;
+import org.apache.cassandra.db.index.GlobalIndexManager;
 import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.db.marshal.CompositeType;
@@ -77,6 +79,13 @@ public abstract class SingleColumnRestriction extends AbstractRestriction
         return index != null && isSupportedBy(index);
     }
 
+    @Override
+    public boolean hasSupportingIndex(GlobalIndexManager indexManager)
+    {
+        GlobalIndex index = indexManager.getIndexForColumn(columnDef.name.bytes);
+        return index != null && isSupportedBy(index);
+    }
+
     /**
      * Check if this type of restriction is supported by the specified index.
      *
@@ -85,6 +94,15 @@ public abstract class SingleColumnRestriction extends AbstractRestriction
      * <code>false</code> otherwise.
      */
     protected abstract boolean isSupportedBy(SecondaryIndex index);
+
+    /**
+     * Check if this type of restriction is supported by the specified index.
+     *
+     * @param index the global index
+     * @return <code>true</code> this type of restriction is supported by the specified index,
+     * <code>false</code> otherwise.
+     */
+    protected abstract boolean isSupportedBy(GlobalIndex index);
 
     public static final class EQ extends SingleColumnRestriction
     {
@@ -127,6 +145,12 @@ public abstract class SingleColumnRestriction extends AbstractRestriction
 
         @Override
         protected boolean isSupportedBy(SecondaryIndex index)
+        {
+            return index.supportsOperator(Operator.EQ);
+        }
+
+        @Override
+        protected boolean isSupportedBy(GlobalIndex index)
         {
             return index.supportsOperator(Operator.EQ);
         }

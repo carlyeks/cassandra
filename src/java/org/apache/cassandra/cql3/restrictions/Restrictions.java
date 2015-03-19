@@ -23,6 +23,7 @@ import java.util.List;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.db.IndexExpression;
+import org.apache.cassandra.db.index.GlobalIndexManager;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
@@ -47,12 +48,20 @@ interface Restrictions
     public boolean usesFunction(String ksName, String functionName);
 
     /**
-     * Check if the restriction is on indexed columns.
+     * Check if the restriction is on secondary indexed columns.
      *
-     * @param indexManager the index manager
-     * @return <code>true</code> if the restriction is on indexed columns, <code>false</code>
+     * @param indexManager the secondary index manager
+     * @return <code>true</code> if the restriction is on secondary indexed columns, <code>false</code> otherwise
      */
     public boolean hasSupportingIndex(SecondaryIndexManager indexManager);
+
+    /**
+     * Check if the restriction is on globally indexed columns.
+     *
+     * @param indexManager the global index manager
+     * @return <code>true</code> if the restriction is on globally indexed columns, <code>false</code> otherwise
+     */
+    public boolean hasSupportingIndex(GlobalIndexManager indexManager);
 
     /**
      * Adds to the specified list the <code>IndexExpression</code>s corresponding to this <code>Restriction</code>.

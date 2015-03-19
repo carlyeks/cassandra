@@ -23,6 +23,7 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.restrictions.SingleColumnRestriction.Contains;
 import org.apache.cassandra.db.IndexExpression;
+import org.apache.cassandra.db.index.GlobalIndexManager;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
@@ -132,6 +133,18 @@ final class SingleColumnRestrictions implements Restrictions
 
     @Override
     public final boolean hasSupportingIndex(SecondaryIndexManager indexManager)
+    {
+        for (Restriction restriction : restrictions.values())
+        {
+            if (restriction.hasSupportingIndex(indexManager))
+                return true;
+        }
+        return false;
+    }
+
+
+    @Override
+    public final boolean hasSupportingIndex(GlobalIndexManager indexManager)
     {
         for (Restriction restriction : restrictions.values())
         {

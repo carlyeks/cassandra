@@ -35,6 +35,7 @@ import org.apache.cassandra.db.IndexExpression;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.RowPosition;
 import org.apache.cassandra.db.composites.Composite;
+import org.apache.cassandra.db.index.GlobalIndexManager;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -128,11 +129,15 @@ public final class StatementRestrictions
 
         ColumnFamilyStore cfs = Keyspace.open(cfm.ksName).getColumnFamilyStore(cfm.cfName);
         SecondaryIndexManager secondaryIndexManager = cfs.indexManager;
+        GlobalIndexManager globalIndexManager = cfs.globalIndexManager;
 
-        boolean hasQueriableClusteringColumnIndex = clusteringColumnsRestrictions.hasSupportingIndex(secondaryIndexManager);
+        boolean hasQueriableClusteringColumnIndex = clusteringColumnsRestrictions.hasSupportingIndex(secondaryIndexManager)
+                || clusteringColumnsRestrictions.hasSupportingIndex(globalIndexManager);
         boolean hasQueriableIndex = hasQueriableClusteringColumnIndex
                 || partitionKeyRestrictions.hasSupportingIndex(secondaryIndexManager)
-                || nonPrimaryKeyRestrictions.hasSupportingIndex(secondaryIndexManager);
+                || partitionKeyRestrictions.hasSupportingIndex(globalIndexManager)
+                || nonPrimaryKeyRestrictions.hasSupportingIndex(secondaryIndexManager)
+                || nonPrimaryKeyRestrictions.hasSupportingIndex(globalIndexManager);
 
         // At this point, the select statement if fully constructed, but we still have a few things to validate
         processPartitionKeyRestrictions(hasQueriableIndex);
