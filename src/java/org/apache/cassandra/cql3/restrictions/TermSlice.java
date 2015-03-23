@@ -20,6 +20,7 @@ package org.apache.cassandra.cql3.restrictions;
 import org.apache.cassandra.cql3.Operator;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.statements.Bound;
+import org.apache.cassandra.db.index.Index;
 import org.apache.cassandra.db.index.SecondaryIndex;
 
 final class TermSlice
@@ -151,7 +152,7 @@ final class TermSlice
      * @return <code>true</code> this type of <code>TermSlice</code> is supported by the specified index,
      * <code>false</code> otherwise.
      */
-    public boolean isSupportedBy(SecondaryIndex index)
+    public boolean isSupportedBy(Index index)
     {
         boolean supported = false;
 

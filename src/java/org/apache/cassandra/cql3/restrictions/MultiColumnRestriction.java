@@ -32,8 +32,7 @@ import org.apache.cassandra.db.composites.CBuilder;
 import org.apache.cassandra.db.composites.CType;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.composites.Composites;
-import org.apache.cassandra.db.index.SecondaryIndex;
-import org.apache.cassandra.db.index.SecondaryIndexManager;
+import org.apache.cassandra.db.index.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkFalse;
@@ -105,11 +104,11 @@ public abstract class MultiColumnRestriction extends AbstractPrimaryKeyRestricti
     }
 
     @Override
-    public final boolean hasSupportingIndex(SecondaryIndexManager indexManager)
+    public final boolean hasSupportingIndex(IndexManager indexManager)
     {
         for (ColumnDefinition columnDef : columnDefs)
         {
-            SecondaryIndex index = indexManager.getIndexForColumn(columnDef.name.bytes);
+            Index index = indexManager.getIndexForColumn(columnDef.name.bytes);
             if (index != null && isSupportedBy(index))
                 return true;
         }
@@ -123,7 +122,7 @@ public abstract class MultiColumnRestriction extends AbstractPrimaryKeyRestricti
      * @return <code>true</code> this type of restriction is supported by the specified index,
      * <code>false</code> otherwise.
      */
-    protected abstract boolean isSupportedBy(SecondaryIndex index);
+    protected abstract boolean isSupportedBy(Index index);
 
     public static class EQ  extends MultiColumnRestriction
     {
@@ -170,7 +169,7 @@ public abstract class MultiColumnRestriction extends AbstractPrimaryKeyRestricti
         }
 
         @Override
-        protected boolean isSupportedBy(SecondaryIndex index)
+        protected boolean isSupportedBy(Index index)
         {
             return index.supportsOperator(Operator.EQ);
         }
@@ -281,7 +280,7 @@ public abstract class MultiColumnRestriction extends AbstractPrimaryKeyRestricti
         }
 
         @Override
-        protected boolean isSupportedBy(SecondaryIndex index)
+        protected boolean isSupportedBy(Index index)
         {
             return index.supportsOperator(Operator.IN);
         }
@@ -443,7 +442,7 @@ public abstract class MultiColumnRestriction extends AbstractPrimaryKeyRestricti
         }
 
         @Override
-        protected boolean isSupportedBy(SecondaryIndex index)
+        protected boolean isSupportedBy(Index index)
         {
             return slice.isSupportedBy(index);
         }
