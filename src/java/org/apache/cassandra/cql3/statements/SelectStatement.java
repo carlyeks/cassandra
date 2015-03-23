@@ -91,7 +91,7 @@ public class SelectStatement implements CQLStatement
     private final Comparator<List<ByteBuffer>> orderingComparator;
 
     // Used by forSelection below
-    private static final Parameters defaultParameters = new Parameters(Collections.<ColumnIdentifier.Raw, Boolean>emptyMap(), false, false);
+    private static final Parameters defaultParameters = new Parameters(Collections.<ColumnIdentifier.Raw, Boolean>emptyMap(), false, false, false);
 
     public SelectStatement(CFMetaData cfm,
                            int boundTerms,
@@ -535,7 +535,7 @@ public class SelectStatement implements CQLStatement
 
     public List<IndexExpression> getValidatedIndexExpressions(QueryOptions options) throws InvalidRequestException
     {
-        if (!restrictions.usesSecondaryIndexing())
+        if (!restrictions.usesSecondaryIndexing() || parameters.usesGlobalIndexing)
             return Collections.emptyList();
 
         List<IndexExpression> expressions = restrictions.getIndexExpressions(options);
@@ -861,12 +861,13 @@ public class SelectStatement implements CQLStatement
             if (globalIndexDefinition == null)
                 return null;
 
-            String name = cfm.cfName + "_" + ByteBufferUtil.bytesToHex(globalIndexDefinition.target.bytes);
+            String name = globalIndexDefinition.getCfName();
             CFName cfName = new CFName();
             cfName.setColumnFamily(name, true);
             cfName.setKeyspace(keyspace(), true);
 
-            RawStatement rawStatement = new RawStatement(cfName, parameters, selectClause, whereClause, limit);
+            Parameters params = new Parameters(parameters.orderings, parameters.isDistinct, parameters.allowFiltering, true);
+            RawStatement rawStatement = new RawStatement(cfName, params, selectClause, whereClause, limit);
             rawStatement.variables = getBoundVariables();
             return rawStatement.prepare();
         }
@@ -1047,14 +1048,17 @@ public class SelectStatement implements CQLStatement
         private final Map<ColumnIdentifier.Raw, Boolean> orderings;
         private final boolean isDistinct;
         private final boolean allowFiltering;
+        private final boolean usesGlobalIndexing;
 
         public Parameters(Map<ColumnIdentifier.Raw, Boolean> orderings,
                           boolean isDistinct,
-                          boolean allowFiltering)
+                          boolean allowFiltering,
+                          boolean usesGlobalIndexing)
         {
             this.orderings = orderings;
             this.isDistinct = isDistinct;
             this.allowFiltering = allowFiltering;
+            this.usesGlobalIndexing = usesGlobalIndexing;
         }
     }
 

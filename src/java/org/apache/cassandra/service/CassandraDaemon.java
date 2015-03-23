@@ -358,11 +358,12 @@ public class CassandraDaemon
                 {
                     for (ColumnFamilyStore cf: keyspace.getColumnFamilyStores())
                     {
-                        cf.globalIndexManager.reload();
+                        cf.globalIndexManager.buildIfRequired();
                     }
                 }
             }
         };
+
         ScheduledExecutors.optionalTasks.schedule(indexRebuild, StorageService.RING_DELAY, TimeUnit.MILLISECONDS);
 
 
