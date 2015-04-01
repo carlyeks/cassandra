@@ -29,7 +29,8 @@ import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.Term;
 import org.apache.cassandra.cql3.statements.Bound;
 import org.apache.cassandra.db.IndexExpression;
-import org.apache.cassandra.db.index.*;
+import org.apache.cassandra.db.index.Index;
+import org.apache.cassandra.db.index.IndexManager;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 

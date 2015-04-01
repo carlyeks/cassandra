@@ -32,7 +32,8 @@ import org.apache.cassandra.db.composites.CBuilder;
 import org.apache.cassandra.db.composites.CType;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.composites.Composites;
-import org.apache.cassandra.db.index.*;
+import org.apache.cassandra.db.index.Index;
+import org.apache.cassandra.db.index.IndexManager;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkFalse;
@@ -117,7 +118,6 @@ public abstract class MultiColumnRestriction extends AbstractPrimaryKeyRestricti
 
     /**
      * Check if this type of restriction is supported for the specified column by the specified index.
-     * @param index the Secondary index
      *
      * @return <code>true</code> this type of restriction is supported by the specified index,
      * <code>false</code> otherwise.

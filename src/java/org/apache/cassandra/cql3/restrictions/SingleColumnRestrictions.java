@@ -23,9 +23,7 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.restrictions.SingleColumnRestriction.Contains;
 import org.apache.cassandra.db.IndexExpression;
-import org.apache.cassandra.db.index.GlobalIndexManager;
 import org.apache.cassandra.db.index.IndexManager;
-import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 
 /**
