@@ -53,6 +53,8 @@ import csv
 import getpass
 from functools import partial
 import traceback
+import random
+import collections
 
 
 readline = None
@@ -1571,6 +1573,9 @@ class Shell(cmd.Cmd):
                 compression=None)
         session = new_cluster.connect(self.keyspace)
         conn = session._pools.values()[0]._connection
+        in_progress = [None] * conn.max_request_id
+        timed_out = collections.deque()
+        success = collections.deque()
 
         # pre-build as much of the query as we can
         table_meta = self.get_table_meta(ks, cf)
@@ -1587,7 +1592,7 @@ class Shell(cmd.Cmd):
 
         insert_timestamp = int(time.time() * 1e6)
 
-        def callback(record_num, response):
+        def callback(record_num, request_id, response):
             # This is the callback we register for all inserts.  Because this
             # is run on the event-loop thread, we need to hold a lock when
             # adjusting in_flight.
@@ -1595,16 +1600,74 @@ class Shell(cmd.Cmd):
                 conn.in_flight -= 1
 
             if not isinstance(response, ResultMessage):
-                # It's an error. Notify the parent process and let it send
-                # a stop signal to all child processes (including this one).
-                pipe.send((record_num, str(response)))
-                if isinstance(response, Exception) and self.debug:
-                    traceback.print_exc(response)
+                # If it is a write timeout, start backing off
+                if isinstance(response, cassandra.protocol.WriteTimeoutErrorMessage):
+                    timed_out.append(request_id)
+                else:
+                    # All others are fatal errors. Notify the parent process and
+                    # let it send a stop signal to all child processes (including
+                    # this one).
+                    pipe.send((record_num, str(response)))
+                    if isinstance(response, Exception) and self.debug:
+                        traceback.print_exc(response)
+            else:
+                success.append(request_id)
+
+        def execute_query_message(current_record, query_message):
+            request_id = conn.get_request_id()
+            if in_progress[request_id]:
+                return False
+
+            binary_message = query_message.to_binary(
+                stream_id=request_id, protocol_version=DEFAULT_PROTOCOL_VERSION, compression=None)
+
+            try:
+                # add the message directly to the connection's queue
+                with conn.lock:
+                    conn.in_flight += 1
+                conn._callbacks[request_id] = partial(callback, current_record, request_id)
+                in_progress[request_id] = (current_record, query_message)
+                conn.deque.append(binary_message)
+                return True
+            except Exception, e:
+                pipe.send((request_id, str(e)))
+
+        def check_queues():
+            had_pending = False
+            while len(success) > 0:
+                in_progress[success.popleft()] = None
+                had_pending = True
+
+            # if we can't add new queries while because they are all
+            # timed out, we don't want this to infinite loop. Break
+            # after the first time through, and allow us to get some
+            # successes and rerun.
+            tries = len(timed_out)
+            while tries > 0 and len(timed_out) > 0:
+                tries -= 1
+                try:
+                    time.sleep(0.05)
+                    to_retry = timed_out.popleft()
+                    message = in_progress[to_retry]
+                    if None == message:
+                        print "failed %d %d" % (to_retry, conn.max_request_id)
+                    (current_record, query_message) = message
+                    if execute_query_message(current_record, query_message):
+                        in_progress[to_retry] = None
+                    else:
+                        timed_out.append(to_retry)
+                    had_pending = True
+                except Exception, e:
+                    print e
+                    pipe.send((current_record, str(e)))
+            return had_pending
 
         current_record = 0
         insert_num = 0
         try:
             while True:
+                check_queues()
+
                 # To avoid totally maxing out the connection,
                 # defer to the reactor thread when we're close
                 # to capacity
@@ -1651,15 +1714,11 @@ class Shell(cmd.Cmd):
                     full_query, self.consistency_level, serial_consistency_level=None,
                     fetch_size=None, paging_state=None, timestamp=insert_timestamp)
 
-                request_id = conn.get_request_id()
-                binary_message = query_message.to_binary(
-                    stream_id=request_id, protocol_version=DEFAULT_PROTOCOL_VERSION, compression=None)
-
-                # add the message directly to the connection's queue
-                with conn.lock:
-                    conn.in_flight += 1
-                conn._callbacks[request_id] = partial(callback, current_record)
-                conn.deque.append(binary_message)
+                # if we have exhausted our in-progress, we need to try
+                # to read some responses and process successful values
+                while not execute_query_message(current_record, query_message):
+                    conn._readable = True
+                    check_queues()
 
                 # every 50 records, clear the pending writes queue and read
                 # any responses we have
@@ -1672,8 +1731,9 @@ class Shell(cmd.Cmd):
             pipe.send((current_record, exc))
         finally:
             # wait for any pending requests to finish
-            while conn.in_flight > 0:
+            while conn.in_flight > 0 or check_queues():
                 conn._readable = True
+                conn._writable = True
                 time.sleep(0.01)
 
             new_cluster.shutdown()
