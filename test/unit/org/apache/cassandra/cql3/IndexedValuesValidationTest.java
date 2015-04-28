@@ -37,7 +37,7 @@ public class IndexedValuesValidationTest extends CQLTester
     {
         createTable("CREATE TABLE %s(a int, b int, c blob, PRIMARY KEY (a))");
         createIndex("CREATE INDEX ON %s(c)");
-        performInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (0, 0, ?)");
+        failToInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (0, 0, ?)");
     }
 
     @Test
@@ -45,7 +45,7 @@ public class IndexedValuesValidationTest extends CQLTester
     {
         createTable("CREATE TABLE %s(a int, b blob, c int, PRIMARY KEY (a, b))");
         createIndex("CREATE INDEX ON %s(b)");
-        performInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (0, ?, 0)");
+        failToInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (0, ?, 0)");
     }
 
     @Test
@@ -53,7 +53,7 @@ public class IndexedValuesValidationTest extends CQLTester
     {
         createTable("CREATE TABLE %s(a blob, b int, c int, PRIMARY KEY ((a, b)))");
         createIndex("CREATE INDEX ON %s(a)");
-        performInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (?, 0, 0)");
+        failToInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (?, 0, 0)");
     }
 
     @Test
@@ -61,10 +61,54 @@ public class IndexedValuesValidationTest extends CQLTester
     {
         createTable("CREATE TABLE %s(a int, b blob, PRIMARY KEY (a)) WITH COMPACT STORAGE");
         createIndex("CREATE INDEX ON %s(b)");
-        performInsertWithIndexedValueOver64k("INSERT INTO %s (a, b) VALUES (0, ?)");
+        failToInsertWithIndexedValueOver64k("INSERT INTO %s (a, b) VALUES (0, ?)");
     }
 
-    public void performInsertWithIndexedValueOver64k(String insertCQL) throws Throwable
+    @Test
+    public void testIndexOnClusteringValueInsertPartitionKeyOver64k() throws Throwable
+    {
+        // This test should fail because although none of the indexed
+        // values are oversized, the indexed key would be.
+        createTable("CREATE TABLE %s(a blob, b int, c int, PRIMARY KEY (a, b))");
+        createIndex("CREATE INDEX ON %s(b)");
+
+        failToInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (?, 0, 0)");
+    }
+
+    @Test
+    public void testIndexOnCollectionInsertCollectionKeyOver64k() throws Throwable
+    {
+        createTable("CREATE TABLE %s(a int, b map<blob, int>, PRIMARY KEY (a))");
+        createIndex("CREATE INDEX ON %s(b)");
+        failToInsertWithIndexedValueOver64k("UPDATE %s SET b[?] = 0 WHERE a = 0");
+    }
+
+    @Test
+    public void testIndexOnPartitionKeyInsertValueOver64k() throws Throwable
+    {
+        createTable("CREATE TABLE %s(a int, b int, c blob, PRIMARY KEY ((a, b)))");
+        createIndex("CREATE INDEX ON %s(a)");
+        succeedInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (0, 0, ?)");
+    }
+    
+    @Test
+    public void testIndexOnClusteringValueInsertValueOver64k() throws Throwable
+    {
+        createTable("CREATE TABLE %s(a int, b int, c blob, PRIMARY KEY (a, b))");
+        createIndex("CREATE INDEX ON %s(b)");
+        succeedInsertWithIndexedValueOver64k("INSERT INTO %s (a, b, c) VALUES (0, 0, ?)");
+
+    }
+
+    @Test
+    public void testIndexOnCollectionKeyInsertCollectionValueOver64k() throws Throwable
+    {
+        createTable("CREATE TABLE %s(a int, b map<int, blob>, PRIMARY KEY (a))");
+        createIndex("CREATE INDEX ON %s(keys(b))");
+        succeedInsertWithIndexedValueOver64k("UPDATE %s SET b[0] = ? WHERE a = 0");
+    }
+
+    public void failToInsertWithIndexedValueOver64k(String insertCQL) throws Throwable
     {
         ByteBuffer buf = ByteBuffer.allocate(1024 * 65);
         buf.clear();
@@ -82,5 +126,18 @@ public class IndexedValuesValidationTest extends CQLTester
         {
             // as expected
         }
+    }
+
+    public void succeedInsertWithIndexedValueOver64k(String insertCQL) throws Throwable
+    {
+        ByteBuffer buf = ByteBuffer.allocate(1024 * 65);
+        buf.clear();
+
+        //read more than 64k
+        for (int i=0; i<1024 + 1; i++)
+            buf.put((byte)0);
+
+        execute(insertCQL, buf);
+        flush();
     }
 }
