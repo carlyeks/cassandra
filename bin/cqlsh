@@ -35,6 +35,7 @@ from uuid import UUID
 description = "CQL Shell for Apache Cassandra"
 version = "5.0.1"
 
+from collections import deque
 from StringIO import StringIO
 from contextlib import contextmanager
 from glob import glob
@@ -1572,6 +1573,8 @@ class Shell(cmd.Cmd):
         session = new_cluster.connect(self.keyspace)
         conn = session._pools.values()[0]._connection
 
+        retries = deque()
+
         # pre-build as much of the query as we can
         table_meta = self.get_table_meta(ks, cf)
         pk_cols = [col.name for col in table_meta.primary_key]
@@ -1587,19 +1590,39 @@ class Shell(cmd.Cmd):
 
         insert_timestamp = int(time.time() * 1e6)
 
-        def callback(record_num, response):
-            # This is the callback we register for all inserts.  Because this
-            # is run on the event-loop thread, we need to hold a lock when
-            # adjusting in_flight.
-            with conn.lock:
-                conn.in_flight -= 1
+        def callback(record_num, row, response):
+            # This is the callback we register for all inserts.
 
             if not isinstance(response, ResultMessage):
                 # It's an error. Notify the parent process and let it send
                 # a stop signal to all child processes (including this one).
-                pipe.send((record_num, str(response)))
-                if isinstance(response, Exception) and self.debug:
-                    traceback.print_exc(response)
+                if isinstance(response, cassandra.protocol.WriteTimeoutErrorMessage):
+                    retries.append((record_num, row))
+                else:
+                    pipe.send((record_num, str(response)))
+                    if isinstance(response, Exception) and self.debug:
+                        traceback.print_exc(response)
+
+            # Because this is run on the event-loop thread, we need to hold a lock when
+            # adjusting in_flight.
+            with conn.lock:
+                conn.in_flight -= 1
+
+        def execute(row):
+            full_query = query % (','.join(row),)
+            query_message = QueryMessage(
+                full_query, self.consistency_level, serial_consistency_level=None,
+                fetch_size=None, paging_state=None, timestamp=insert_timestamp)
+
+            request_id = conn.get_request_id()
+            binary_message = query_message.to_binary(
+                stream_id=request_id, protocol_version=DEFAULT_PROTOCOL_VERSION, compression=None)
+
+            # add the message directly to the connection's queue
+            with conn.lock:
+                conn.in_flight += 1
+            conn._callbacks[request_id] = partial(callback, current_record, row)
+            conn.deque.append(binary_message)
 
         current_record = 0
         insert_num = 0
@@ -1613,53 +1636,44 @@ class Shell(cmd.Cmd):
                     time.sleep(0.05)
                     continue
 
-                try:
-                    (current_record, row) = pipe.recv()
-                except EOFError:
-                    # the pipe was closed and there's nothing to receive
-                    sys.stdout.write('Failed to read from pipe:\n\n')
-                    sys.stdout.flush()
-                    conn._writable = True
-                    conn._readable = True
-                    break
+                if len(retries) > 0:
+                    (current_record, row) = retries.popleft()
+                    time.sleep(0.05)
+                else:
+                    try:
+                        (current_record, row) = pipe.recv()
+                    except EOFError:
+                        # the pipe was closed and there's nothing to receive
+                        sys.stdout.write('Failed to read from pipe:\n\n')
+                        sys.stdout.flush()
+                        conn._writable = True
+                        conn._readable = True
+                        break
 
-                # see if the parent process has signaled that we are done
-                if (current_record, row) == (None, None):
-                    conn._writable = True
-                    conn._readable = True
-                    pipe.close()
-                    break
+                    # see if the parent process has signaled that we are done
+                    if (current_record, row) == (None, None):
+                        conn._writable = True
+                        conn._readable = True
+                        pipe.close()
+                        break
 
-                # format the values in the row
-                for i, value in enumerate(row):
-                    if value != nullval:
-                        if should_escape[i]:
-                            row[i] = protect_value(value)
-                    elif i in pk_indexes:
-                        # By default, nullval is an empty string. See CASSANDRA-7792 for details.
-                        message = "Cannot insert null value for primary key column '%s'." % (pk_cols[i],)
-                        if nullval == '':
-                            message += " If you want to insert empty strings, consider using " \
-                                       "the WITH NULL=<marker> option for COPY."
-                        pipe.send((current_record, message))
-                        return
-                    else:
-                        row[i] = 'null'
+                    # format the values in the row
+                    for i, value in enumerate(row):
+                        if value != nullval:
+                            if should_escape[i]:
+                                row[i] = protect_value(value)
+                        elif i in pk_indexes:
+                            # By default, nullval is an empty string. See CASSANDRA-7792 for details.
+                            message = "Cannot insert null value for primary key column '%s'." % (pk_cols[i],)
+                            if nullval == '':
+                                message += " If you want to insert empty strings, consider using " \
+                                           "the WITH NULL=<marker> option for COPY."
+                            pipe.send((current_record, message))
+                            return
+                        else:
+                            row[i] = 'null'
 
-                full_query = query % (','.join(row),)
-                query_message = QueryMessage(
-                    full_query, self.consistency_level, serial_consistency_level=None,
-                    fetch_size=None, paging_state=None, timestamp=insert_timestamp)
-
-                request_id = conn.get_request_id()
-                binary_message = query_message.to_binary(
-                    stream_id=request_id, protocol_version=DEFAULT_PROTOCOL_VERSION, compression=None)
-
-                # add the message directly to the connection's queue
-                with conn.lock:
-                    conn.in_flight += 1
-                conn._callbacks[request_id] = partial(callback, current_record)
-                conn.deque.append(binary_message)
+                execute(row)
 
                 # every 50 records, clear the pending writes queue and read
                 # any responses we have
@@ -1668,10 +1682,22 @@ class Shell(cmd.Cmd):
                     conn._readable = True
 
                 insert_num += 1
+
+            # outside of the loop, finish any retries
+            while conn.in_flight > 0 or len(retries) > 0:
+                (current_record, row) = retries.popleft()
+                time.sleep(0.05)
+                execute(row)
+                conn._writable = True
+                conn._readable = True
+
         except Exception, exc:
+            print exc
             pipe.send((current_record, exc))
         finally:
-            # wait for any pending requests to finish
+            # wait for any pending requests to finish, don't bother with
+            # retries, because they will have all been handled in non-error
+            # cases, and we don't want to try to handle them after an error
             while conn.in_flight > 0:
                 conn._readable = True
                 time.sleep(0.01)
