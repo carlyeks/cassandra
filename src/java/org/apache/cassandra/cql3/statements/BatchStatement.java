@@ -32,6 +32,7 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.tracing.Tracing;
@@ -260,6 +261,7 @@ public class BatchStatement implements CQLStatement
             {
                 logger.warn(format, ksCfPairs, size, warnThreshold, size - warnThreshold, "");
             }
+            ClientWarn.warn(String.format(format, ksCfPairs, size, warnThreshold, size - warnThreshold, ""));
         }
     }
 
@@ -299,6 +301,9 @@ public class BatchStatement implements CQLStatement
             }
         }));
         verifyBatchSize(cfs);
+
+        if (type == Type.UNLOGGED)
+            ClientWarn.warn("UNLOGGED BATCH statements have been deprecated, and will be removed in a future version");
 
         boolean mutateAtomic = (type == Type.LOGGED && mutations.size() > 1);
         StorageProxy.mutateWithTriggers(mutations, cl, mutateAtomic);
