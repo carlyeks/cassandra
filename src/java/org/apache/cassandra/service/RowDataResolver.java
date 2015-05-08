@@ -71,6 +71,11 @@ public class RowDataResolver extends AbstractRowResolver
             for (MessageIn<ReadResponse> message : replies)
             {
                 ReadResponse response = message.payload;
+                if (response.hasWarnings())
+                {
+                    for (String warning : response.getWarnings())
+                        ClientWarn.warn(warning);
+                }
                 ColumnFamily cf = response.row().cf;
                 assert !response.isDigestQuery() : "Received digest response to repair read from " + message.from;
                 versions.add(cf);

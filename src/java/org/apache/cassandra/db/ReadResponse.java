@@ -19,9 +19,12 @@ package org.apache.cassandra.db;
 
 import java.io.*;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 /*
@@ -35,19 +38,32 @@ public class ReadResponse
 
     private final Row row;
     private final ByteBuffer digest;
+    private final List<String> warnings;
 
-    public ReadResponse(ByteBuffer digest)
+    public ReadResponse(ByteBuffer digest, List<String> warnings)
     {
         assert digest != null;
         this.digest= digest;
         this.row = null;
+        this.warnings = warnings;
     }
 
-    public ReadResponse(Row row)
+    public ReadResponse(ByteBuffer digest)
+    {
+        this(digest, ClientWarn.getWarnings());
+    }
+
+    public ReadResponse(Row row, List<String> warnings)
     {
         assert row != null;
         this.row = row;
         this.digest = null;
+        this.warnings = warnings;
+    }
+
+    public ReadResponse(Row row)
+    {
+        this(row, ClientWarn.getWarnings());
     }
 
     public Row row()
@@ -64,6 +80,16 @@ public class ReadResponse
     {
         return digest != null;
     }
+
+    public boolean hasWarnings()
+    {
+        return warnings != null;
+    }
+
+    public List<String> getWarnings()
+    {
+        return warnings;
+    }
 }
 
 class ReadResponseSerializer implements IVersionedSerializer<ReadResponse>
@@ -76,6 +102,15 @@ class ReadResponseSerializer implements IVersionedSerializer<ReadResponse>
         out.writeBoolean(response.isDigestQuery());
         if (!response.isDigestQuery())
             Row.serializer.serialize(response.row(), out, version);
+        if (response.hasWarnings())
+        {
+            List<String> warnings = response.getWarnings();
+            out.writeInt(warnings.size());
+            for (String warning : warnings)
+                out.writeUTF(warning);
+        }
+        else
+            out.writeInt(0);
     }
 
     public ReadResponse deserialize(DataInput in, int version) throws IOException
@@ -97,7 +132,16 @@ class ReadResponseSerializer implements IVersionedSerializer<ReadResponse>
             row = Row.serializer.deserialize(in, version, ColumnSerializer.Flag.FROM_REMOTE);
         }
 
-        return isDigest ? new ReadResponse(ByteBuffer.wrap(digest)) : new ReadResponse(row);
+        int numWarnings = in.readInt();
+        List<String> warnings = null;
+        if (numWarnings != 0)
+        {
+            warnings = new ArrayList<>();
+            for (int i = 0; i < numWarnings; i++)
+                warnings.add(in.readUTF());
+        }
+
+        return isDigest ? new ReadResponse(ByteBuffer.wrap(digest), warnings) : new ReadResponse(row, warnings);
     }
 
     public long serializedSize(ReadResponse response, int version)
@@ -109,6 +153,16 @@ class ReadResponseSerializer implements IVersionedSerializer<ReadResponse>
         size += typeSizes.sizeof(response.isDigestQuery());
         if (!response.isDigestQuery())
             size += Row.serializer.serializedSize(response.row(), version);
+        if (response.hasWarnings())
+        {
+            List<String> warnings = response.getWarnings();
+            size += typeSizes.sizeof(warnings.size());
+            for (String warning: warnings)
+                size += typeSizes.sizeof(warning);
+        }
+        else
+            size += typeSizes.sizeof(0);
+
         return size;
     }
 }
