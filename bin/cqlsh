@@ -2004,8 +2004,8 @@ class Shell(cmd.Cmd):
                        ssl_options=self.conn.ssl_options,
                        load_balancing_policy=WhiteListRoundRobinPolicy([self.hostname]))
 
-        if self.keyspace:
-            session = conn.connect(self.keyspace)
+        if self.current_keyspace:
+            session = conn.connect(self.current_keyspace)
         else:
             session = conn.connect()
 
