@@ -1845,17 +1845,18 @@ class Shell(cmd.Cmd):
         password = parsed.get_binding('password')
         if password is None:
             password = getpass.getpass()
-
-        self.username = username
-        self.password = password
+        else:
+            password = password[1:-1]
 
         transport = self.transport_factory(self.hostname, self.port, os.environ, CONFIG_FILE)
-        conn = cql.connect(self.hostname, self.port, keyspace=self.keyspace, user=username,
+        conn = cql.connect(self.hostname, self.port, keyspace=self.current_keyspace, user=username,
                            password=password, cql_version=self.conn.cql_version,
                            transport=transport)
 
-        self.conn=conn
+        self.username = username
+        self.password = password
         self.cursor = self.conn.cursor()
+        self.conn=conn
         self.get_connection_versions()
 
     def do_exit(self, parsed=None):
