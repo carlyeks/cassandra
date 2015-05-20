@@ -123,8 +123,7 @@ public class StandaloneScrubber
                 {
                     try
                     {
-                        Scrubber scrubber = new Scrubber(cfs, sstable, options.skipCorrupted, handler, true, !options.noValidate);
-                        try
+                        try (Scrubber scrubber = new Scrubber(cfs, sstable, options.skipCorrupted, handler, true, !options.noValidate))
                         {
                             scrubber.scrub();
                         }
@@ -135,10 +134,6 @@ public class StandaloneScrubber
                                 System.out.println(t.getMessage());
                                 throw t;
                             }
-                        }
-                        finally
-                        {
-                            scrubber.close();
                         }
 
                         // Remove the sstable (it's been copied by scrub and snapshotted)
