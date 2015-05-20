@@ -400,7 +400,7 @@ public class Memtable
     private static int estimateRowOverhead(final int count)
     {
         // calculate row overhead
-        try (OpOrder.Group group = new OpOrder().start())
+        try (final OpOrder.Group group = new OpOrder().start())
         {
             int rowOverhead;
             MemtableAllocator allocator = MEMORY_POOL.newAllocator();

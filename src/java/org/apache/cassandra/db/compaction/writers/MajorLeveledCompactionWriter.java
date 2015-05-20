@@ -50,6 +50,7 @@ public class MajorLeveledCompactionWriter extends CompactionAwareWriter
     private int sstablesWritten = 0;
     private final boolean skipAncestors;
 
+    @SuppressWarnings("resource")
     public MajorLeveledCompactionWriter(ColumnFamilyStore cfs, Set<SSTableReader> allSSTables, Set<SSTableReader> nonExpiredSSTables, long maxSSTableSize, boolean offline, OperationType compactionType)
     {
         super(cfs, allSSTables, nonExpiredSSTables, offline);
@@ -74,6 +75,7 @@ public class MajorLeveledCompactionWriter extends CompactionAwareWriter
     }
 
     @Override
+    @SuppressWarnings("resource")
     public boolean append(AbstractCompactedRow row)
     {
         long posBefore = sstableWriter.currentWriter().getOnDiskFilePointer();
