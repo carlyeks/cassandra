@@ -286,9 +286,6 @@ public class CompactionManager implements CompactionManagerMBean
                 })));
             }
 
-            assert compacting.originals().isEmpty();
-
-
             //Collect all exceptions
             Exception exception = null;
 
