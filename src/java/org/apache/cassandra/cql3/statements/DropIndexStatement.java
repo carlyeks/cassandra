@@ -36,10 +36,10 @@ public class DropIndexStatement extends SchemaAlteringStatement
     // initialized in announceMigration()
     private String indexedCF;
 
-    public DropIndexStatement(String indexName, boolean ifExists)
+    public DropIndexStatement(IndexName indexName, boolean ifExists)
     {
-        super(new CFName());
-        this.indexName = indexName;
+    	super(indexName.getCfName());
+    	this.indexName = indexName.getIdx();
         this.ifExists = ifExists;
     }
 
