@@ -182,6 +182,21 @@ public class Schema
     }
 
     /**
+     * Updates given Keyspace instance to the schema
+     *
+     * @param keyspace The Keyspace instance to store
+     *
+     * @throws IllegalArgumentException if Keyspace is not yet defined
+     */
+    public void updateKeyspaceInstance(Keyspace keyspace)
+    {
+        if (!keyspaceInstances.containsKey(keyspace.getName()))
+            throw new IllegalArgumentException(String.format("Keyspace %s was not yet initialized.", keyspace.getName()));
+
+        keyspaceInstances.put(keyspace.getName(), keyspace);
+    }
+
+    /**
      * Remove keyspace from schema
      *
      * @param keyspaceName The name of the keyspace to remove
@@ -424,7 +439,7 @@ public class Schema
 
         setKeyspaceDefinition(newKsm);
 
-        Keyspace.open(ksName).createReplicationStrategy(newKsm);
+        Schema.instance.updateKeyspaceInstance(Keyspace.open(ksName).update(newKsm));
         MigrationManager.instance.notifyUpdateKeyspace(newKsm);
     }
 
