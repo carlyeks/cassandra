@@ -275,6 +275,15 @@ public class Keyspace
         }
     }
 
+    private Keyspace(KSMetaData ksm, KeyspaceMetrics metric, Map<UUID, ColumnFamilyStore> store)
+    {
+        this.metadata = ksm;
+        createReplicationStrategy(metadata);
+
+        this.metric = metric;
+        this.columnFamilyStores.putAll(store);
+    }
+
     private Keyspace(KSMetaData metadata)
     {
         this.metadata = metadata;
@@ -287,13 +296,19 @@ public class Keyspace
         return new Keyspace(metadata);
     }
 
-    public void createReplicationStrategy(KSMetaData ksm)
+    private void createReplicationStrategy(KSMetaData ksm)
     {
         replicationStrategy = AbstractReplicationStrategy.createReplicationStrategy(ksm.name,
                                                                                     ksm.strategyClass,
                                                                                     StorageService.instance.getTokenMetadata(),
                                                                                     DatabaseDescriptor.getEndpointSnitch(),
                                                                                     ksm.strategyOptions);
+    }
+
+
+    public Keyspace update(KSMetaData ksm)
+    {
+        return new Keyspace(ksm, metric, columnFamilyStores);
     }
 
     // best invoked on the compaction mananger.
