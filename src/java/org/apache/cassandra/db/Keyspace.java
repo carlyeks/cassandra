@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -280,13 +281,28 @@ public class Keyspace
         }
     }
 
-    public void createReplicationStrategy(KSMetaData ksm)
+    private Keyspace(KSMetaData ksm, KeyspaceMetrics metric, Map<UUID, ColumnFamilyStore> store)
+    {
+        this.metadata = ksm;
+        createReplicationStrategy(metadata);
+
+        this.metric = metric;
+        this.columnFamilyStores.putAll(store);
+    }
+
+    private void createReplicationStrategy(KSMetaData ksm)
     {
         replicationStrategy = AbstractReplicationStrategy.createReplicationStrategy(ksm.name,
                                                                                     ksm.strategyClass,
                                                                                     StorageService.instance.getTokenMetadata(),
                                                                                     DatabaseDescriptor.getEndpointSnitch(),
                                                                                     ksm.strategyOptions);
+    }
+
+
+    public Keyspace update(KSMetaData ksm)
+    {
+        return new Keyspace(ksm, metric, columnFamilyStores);
     }
 
     // best invoked on the compaction mananger.
