@@ -70,10 +70,9 @@ public class Keyspace
             DatabaseDescriptor.createAllDirectories();
     }
 
-    public final KSMetaData metadata;
-
     /* ColumnFamilyStore per column family */
     private final ConcurrentMap<UUID, ColumnFamilyStore> columnFamilyStores = new ConcurrentHashMap<UUID, ColumnFamilyStore>();
+    private volatile KSMetaData metadata;
     private volatile AbstractReplicationStrategy replicationStrategy;
 
     public static final Function<String,Keyspace> keyspaceTransformer = new Function<String, Keyspace>()
@@ -270,13 +269,29 @@ public class Keyspace
         }
     }
 
-    public void createReplicationStrategy(KSMetaData ksm)
+    private Keyspace(KSMetaData ksm, KeyspaceMetrics metric, Map<UUID, ColumnFamilyStore> store)
+    {
+        this.metadata = ksm;
+        createReplicationStrategy(metadata);
+
+        this.metric = metric;
+        this.columnFamilyStores.putAll(store);
+    }
+
+    private void createReplicationStrategy(KSMetaData ksm)
     {
         replicationStrategy = AbstractReplicationStrategy.createReplicationStrategy(ksm.name,
                                                                                     ksm.strategyClass,
                                                                                     StorageService.instance.getTokenMetadata(),
                                                                                     DatabaseDescriptor.getEndpointSnitch(),
                                                                                     ksm.strategyOptions);
+    }
+
+
+    public void update(KSMetaData ksm)
+    {
+        this.metadata = ksm;
+        createReplicationStrategy(ksm);
     }
 
     // best invoked on the compaction mananger.
@@ -448,5 +463,10 @@ public class Keyspace
     public String getName()
     {
         return metadata.name;
+    }
+
+    public KSMetaData getMetadata()
+    {
+        return metadata;
     }
 }
