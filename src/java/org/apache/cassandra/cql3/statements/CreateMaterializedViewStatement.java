@@ -179,7 +179,11 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
             targetClusteringColumns.add(identifier);
         }
 
-        for (ColumnDefinition def: cfm.allColumns())
+        // We need to include all of the primary key colums from the base table in order to make sure that we do not
+        // overwrite values in the materialized view. We cannot support "collapsing" the base table into a smaller
+        // number of rows in the view because if we need to generate a tombstone, we have no way of knowing which value
+        // is currently being used in the view and whether or not to generate a tombstone.
+        for (ColumnDefinition def : cfm.allColumns())
         {
             if (!def.isPrimaryKeyColumn()) continue;
 

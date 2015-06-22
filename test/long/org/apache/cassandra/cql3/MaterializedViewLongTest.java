@@ -22,12 +22,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import com.datastax.driver.core.Row;
+import com.datastax.driver.core.*;
 import com.datastax.driver.core.exceptions.NoHostAvailableException;
 import com.datastax.driver.core.exceptions.WriteTimeoutException;
 import org.apache.cassandra.db.BatchlogManager;
@@ -57,7 +58,9 @@ public class MaterializedViewLongTest extends CQLTester
                     "c int," +
                     "PRIMARY KEY (a, b))");
 
-        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv_1 AS SELECT * FROM %s PRIMARY KEY (c)");
+        dropTable("DROP MATERIALIZED VIEW IF EXISTS " + keyspace() + ".mv");
+
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv AS SELECT * FROM %s PRIMARY KEY (c)");
 
         CyclicBarrier semaphore = new CyclicBarrier(writers);
 
@@ -118,7 +121,7 @@ public class MaterializedViewLongTest extends CQLTester
 
         int value = executeNet(protocolVersion, "SELECT c FROM %s WHERE a = 1 AND b = 1").one().getInt("c");
 
-        List<Row> rows = executeNet(protocolVersion, "SELECT c FROM " + keyspace() + ".mv_1").all();
+        List<Row> rows = executeNet(protocolVersion, "SELECT c FROM " + keyspace() + ".mv").all();
 
         boolean containsC = false;
         StringBuilder others = new StringBuilder();
@@ -156,5 +159,30 @@ public class MaterializedViewLongTest extends CQLTester
         {
             throw new AssertionError(String.format("Single row had c = %d, expected %d", rows.get(0).getInt("c"), value));
         }
+    }
+
+    @Test
+    public void ttlTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "a int," +
+                    "b int," +
+                    "c int," +
+                    "d int," +
+                    "PRIMARY KEY (a, b))");
+
+        dropTable("DROP MATERIALIZED VIEW IF EXISTS " + keyspace() + ".mv");
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv AS SELECT * FROM %s PRIMARY KEY (c)");
+
+
+        executeNet(protocolVersion, "INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?) USING TTL 5", 1, 1, 1, 1);
+
+        Thread.sleep(TimeUnit.SECONDS.toMillis(3));
+        executeNet(protocolVersion, "INSERT INTO %s (a, b, c) VALUES (?, ?, ?)", 1, 1, 2);
+
+        Thread.sleep(TimeUnit.SECONDS.toMillis(3));
+        List<Row> results = executeNet(protocolVersion, "SELECT d FROM " + keyspace() + ".mv WHERE c = 2 AND a = 1 AND b = 1").all();
+        assert results.size() == 1;
+        assert results.get(0).isNull(0);
     }
 }
