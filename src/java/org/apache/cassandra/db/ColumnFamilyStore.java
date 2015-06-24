@@ -238,6 +238,30 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         }
     }
 
+    public static Runnable getBackgroundCompactionTaskSubmitter()
+    {
+        return new Runnable()
+        {
+            public void run()
+            {
+                List<ColumnFamilyStore> submitted = new ArrayList<>();
+                for (Keyspace keyspace : Keyspace.all())
+                    for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
+                        if (!CompactionManager.instance.submitBackground(cfs, false).isEmpty())
+                            submitted.add(cfs);
+
+                while (!submitted.isEmpty() && CompactionManager.instance.getActiveCompactions() < CompactionManager.instance.getMaximumCompactorThreads())
+                {
+                    List<ColumnFamilyStore> submitMore = ImmutableList.copyOf(submitted);
+                    submitted.clear();
+                    for (ColumnFamilyStore cfs : submitMore)
+                        if (!CompactionManager.instance.submitBackground(cfs, false).isEmpty())
+                            submitted.add(cfs);
+                }
+            }
+        };
+    }
+
     public void setCompactionStrategyClass(String compactionStrategyClass)
     {
         try
@@ -1827,12 +1851,27 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     public RefViewFragment selectAndReference(Function<DataTracker.View, List<SSTableReader>> filter)
     {
+        long failingSince = -1L;
         while (true)
         {
             ViewFragment view = select(filter);
             Refs<SSTableReader> refs = Refs.tryRef(view.sstables);
             if (refs != null)
                 return new RefViewFragment(view.sstables, view.memtables, refs);
+            if (failingSince <= 0)
+            {
+                failingSince = System.nanoTime();
+            }
+            else if (TimeUnit.MILLISECONDS.toNanos(100) > System.nanoTime() - failingSince)
+            {
+                List<SSTableReader> released = new ArrayList<>();
+                for (SSTableReader reader : view.sstables)
+                    if (reader.selfRef().globalCount() == 0)
+                        released.add(reader);
+                logger.info("Spinning trying to capture released readers {}", released);
+                logger.info("Spinning trying to capture all readers {}", view.sstables);
+                failingSince = System.nanoTime();
+            }
         }
     }
 
