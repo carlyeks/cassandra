@@ -46,29 +46,43 @@ public abstract class Functions
     static
     {
         declare(AggregateFcts.countRowsFunction);
-        declare(TimeuuidFcts.nowFct);
-        declare(TimeuuidFcts.minTimeuuidFct);
-        declare(TimeuuidFcts.maxTimeuuidFct);
-        declare(TimeuuidFcts.dateOfFct);
-        declare(TimeuuidFcts.unixTimestampOfFct);
+        declare(TimeFcts.nowFct);
+        declare(TimeFcts.minTimeuuidFct);
+        declare(TimeFcts.maxTimeuuidFct);
+        declare(TimeFcts.dateOfFct);
+        declare(TimeFcts.unixTimestampOfFct);
+        declare(TimeFcts.timeUuidtoDate);
+        declare(TimeFcts.timeUuidToTimestamp);
+        declare(TimeFcts.timeUuidToUnixTimestamp);
+        declare(TimeFcts.timestampToDate);
+        declare(TimeFcts.timestampToUnixTimestamp);
+        declare(TimeFcts.dateToTimestamp);
+        declare(TimeFcts.dateToUnixTimestamp);
         declare(UuidFcts.uuidFct);
 
         for (CQL3Type type : CQL3Type.Native.values())
         {
             // Note: because text and varchar ends up being synonymous, our automatic makeToBlobFunction doesn't work
             // for varchar, so we special case it below. We also skip blob for obvious reasons.
-            if (type == CQL3Type.Native.VARCHAR || type == CQL3Type.Native.BLOB)
-                continue;
-
-            declare(BytesConversionFcts.makeToBlobFunction(type.getType()));
-            declare(BytesConversionFcts.makeFromBlobFunction(type.getType()));
-
-            declare(AggregateFcts.makeCountFunction(type.getType()));
-            declare(AggregateFcts.makeMaxFunction(type.getType()));
-            declare(AggregateFcts.makeMinFunction(type.getType()));
+            if (type != CQL3Type.Native.VARCHAR && type != CQL3Type.Native.BLOB)
+            {
+                declare(BytesConversionFcts.makeToBlobFunction(type.getType()));
+                declare(BytesConversionFcts.makeFromBlobFunction(type.getType()));
+            }
         }
         declare(BytesConversionFcts.VarcharAsBlobFct);
         declare(BytesConversionFcts.BlobAsVarcharFact);
+
+        for (CQL3Type type : CQL3Type.Native.values())
+        {
+            // special case varchar to avoid duplicating functions for UTF8Type
+            if (type != CQL3Type.Native.VARCHAR)
+            {
+                declare(AggregateFcts.makeCountFunction(type.getType()));
+                declare(AggregateFcts.makeMaxFunction(type.getType()));
+                declare(AggregateFcts.makeMinFunction(type.getType()));
+            }
+        }
         declare(AggregateFcts.sumFunctionForInt32);
         declare(AggregateFcts.sumFunctionForLong);
         declare(AggregateFcts.sumFunctionForFloat);
@@ -287,11 +301,10 @@ public abstract class Functions
         return sb.toString();
     }
 
-    // This is *not* thread safe but is only called in SchemaTables that is synchronized.
-    public static void addFunction(AbstractFunction fun)
+    public static void addOrReplaceFunction(AbstractFunction fun)
     {
         // We shouldn't get there unless that function don't exist
-        assert find(fun.name(), fun.argTypes()) == null;
+        removeFunction(fun.name(), fun.argTypes());
         declare(fun);
     }
 
@@ -313,15 +326,7 @@ public abstract class Functions
                     declared.remove(name);
                 return;
             }
-            assert false : "Function " + name + " not declared";
         }
-    }
-
-    // Same remarks than for addFunction
-    public static void replaceFunction(AbstractFunction fun)
-    {
-        removeFunction(fun.name(), fun.argTypes());
-        addFunction(fun);
     }
 
     public static List<Function> getReferencesTo(Function old)
@@ -342,6 +347,19 @@ public abstract class Functions
         return all;
     }
 
+    /*
+     * We need to compare the CQL3 representation of the type because comparing
+     * the AbstractType will fail for example if a UDT has been changed.
+     * Reason is that UserType.equals() takes the field names and types into account.
+     * Example CQL sequence that would fail when comparing AbstractType:
+     *    CREATE TYPE foo ...
+     *    CREATE FUNCTION bar ( par foo ) RETURNS foo ...
+     *    ALTER TYPE foo ADD ...
+     * or
+     *    ALTER TYPE foo ALTER ...
+     * or
+     *    ALTER TYPE foo RENAME ...
+     */
     public static boolean typeEquals(AbstractType<?> t1, AbstractType<?> t2)
     {
         return t1.asCQL3Type().toString().equals(t2.asCQL3Type().toString());

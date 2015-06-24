@@ -31,6 +31,7 @@ import org.apache.cassandra.cql3.functions.Functions;
 import org.apache.cassandra.cql3.functions.UDAggregate;
 import org.apache.cassandra.exceptions.FunctionExecutionException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.serializers.Int32Serializer;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.transport.Event;
 import org.apache.cassandra.transport.messages.ResultMessage;
@@ -111,10 +112,10 @@ public class AggregationTest extends CQLTester
                                          "LANGUAGE JAVA " +
                                          "AS 'return Double.valueOf(Math.copySign(magnitude, sign));';");
 
-        assertColumnNames(execute("SELECT max(a), max(unixTimestampOf(b)) FROM %s"), "system.max(a)", "system.max(system.unixtimestampof(b))");
-        assertRows(execute("SELECT max(a), max(unixTimestampOf(b)) FROM %s"), row(null, null));
-        assertColumnNames(execute("SELECT max(a), unixTimestampOf(max(b)) FROM %s"), "system.max(a)", "system.unixtimestampof(system.max(b))");
-        assertRows(execute("SELECT max(a), unixTimestampOf(max(b)) FROM %s"), row(null, null));
+        assertColumnNames(execute("SELECT max(a), max(toUnixTimestamp(b)) FROM %s"), "system.max(a)", "system.max(system.tounixtimestamp(b))");
+        assertRows(execute("SELECT max(a), max(toUnixTimestamp(b)) FROM %s"), row(null, null));
+        assertColumnNames(execute("SELECT max(a), toUnixTimestamp(max(b)) FROM %s"), "system.max(a)", "system.tounixtimestamp(system.max(b))");
+        assertRows(execute("SELECT max(a), toUnixTimestamp(max(b)) FROM %s"), row(null, null));
 
         assertColumnNames(execute("SELECT max(" + copySign + "(c, d)) FROM %s"), "system.max(" + copySign + "(c, d))");
         assertRows(execute("SELECT max(" + copySign + "(c, d)) FROM %s"), row((Object) null));
@@ -128,8 +129,8 @@ public class AggregationTest extends CQLTester
         Date date = format.parse("2011-02-03 04:10:00");
         date = DateUtils.truncate(date, Calendar.MILLISECOND);
 
-        assertRows(execute("SELECT max(a), max(unixTimestampOf(b)) FROM %s"), row(3, date.getTime()));
-        assertRows(execute("SELECT max(a), unixTimestampOf(max(b)) FROM %s"), row(3, date.getTime()));
+        assertRows(execute("SELECT max(a), max(toUnixTimestamp(b)) FROM %s"), row(3, date.getTime()));
+        assertRows(execute("SELECT max(a), toUnixTimestamp(max(b)) FROM %s"), row(3, date.getTime()));
 
         assertRows(execute("SELECT " + copySign + "(max(c), min(c)) FROM %s"), row(-1.4));
         assertRows(execute("SELECT " + copySign + "(c, d) FROM %s"), row(1.2), row(-1.3), row(1.4));
@@ -1013,8 +1014,8 @@ public class AggregationTest extends CQLTester
 
         UDAggregate f = (UDAggregate) Functions.find(parseFunctionName(a)).get(0);
 
-        Functions.replaceFunction(UDAggregate.createBroken(f.name(), f.argTypes(), f.returnType(),
-                                                           null, new InvalidRequestException("foo bar is broken")));
+        Functions.addOrReplaceFunction(UDAggregate.createBroken(f.name(), f.argTypes(), f.returnType(),
+                                                                null, new InvalidRequestException("foo bar is broken")));
 
         assertInvalidThrowMessage("foo bar is broken", InvalidRequestException.class,
                                   "SELECT " + a + "(val) FROM %s");
@@ -1096,7 +1097,7 @@ public class AggregationTest extends CQLTester
                              "FINALFUNC " + shortFunctionName(fFinal) + ' ' +
                              "INITCOND 1");
 
-        assertInvalidMessage(String.format("Statement on keyspace %s cannot refer to a user function in keyspace %s; user functions can only be used in the keyspace they are defined in",
+        assertInvalidMessage(String.format("Statement on keyspace %s cannot refer to a user type in keyspace %s; user types can only be used in the keyspace they are defined in",
                                            KEYSPACE_PER_TEST, KEYSPACE),
                              "CREATE AGGREGATE " + KEYSPACE_PER_TEST + ".test_wrong_ks(int) " +
                              "SFUNC " + fStateWrong + ' ' +
@@ -1104,7 +1105,7 @@ public class AggregationTest extends CQLTester
                              "FINALFUNC " + shortFunctionName(fFinal) + ' ' +
                              "INITCOND 1");
 
-        assertInvalidMessage(String.format("Statement on keyspace %s cannot refer to a user function in keyspace %s; user functions can only be used in the keyspace they are defined in",
+        assertInvalidMessage(String.format("Statement on keyspace %s cannot refer to a user type in keyspace %s; user types can only be used in the keyspace they are defined in",
                                            KEYSPACE_PER_TEST, KEYSPACE),
                              "CREATE AGGREGATE " + KEYSPACE_PER_TEST + ".test_wrong_ks(int) " +
                              "SFUNC " + shortFunctionName(fState) + ' ' +
@@ -1404,7 +1405,7 @@ public class AggregationTest extends CQLTester
                                      "AS 'return \"fin\" + a;'");
 
         String aCON = createAggregate(KEYSPACE,
-                                      "text, text",
+                                      "text",
                                       "CREATE AGGREGATE %s(text) " +
                                       "SFUNC " + shortFunctionName(fCON) + ' ' +
                                       "STYPE text " +
@@ -1428,7 +1429,7 @@ public class AggregationTest extends CQLTester
                                       "AS 'return \"fin\" + a;'");
 
         String aRNON = createAggregate(KEYSPACE,
-                                      "int, int",
+                                      "int",
                                       "CREATE AGGREGATE %s(text) " +
                                       "SFUNC " + shortFunctionName(fRNON) + ' ' +
                                       "STYPE text " +
@@ -1445,6 +1446,34 @@ public class AggregationTest extends CQLTester
 
         assertRows(execute("SELECT " + aCON + "(b) FROM %s"), row("finxnullyxnullyxnully"));
         assertRows(execute("SELECT " + aRNON + "(b) FROM %s"), row("fin"));
+
+    }
+
+    @Test
+    public void testSystemKsFuncs() throws Throwable
+    {
+
+        String fAdder = createFunction(KEYSPACE,
+                                      "int, int",
+                                      "CREATE FUNCTION %s(a int, b int) " +
+                                      "CALLED ON NULL INPUT " +
+                                      "RETURNS int " +
+                                      "LANGUAGE java " +
+                                      "AS 'return (a != null ? a : 0) + (b != null ? b : 0);'");
+
+        String aAggr = createAggregate(KEYSPACE,
+                                      "int",
+                                      "CREATE AGGREGATE %s(int) " +
+                                      "SFUNC " + shortFunctionName(fAdder) + ' ' +
+                                      "STYPE int " +
+                                      "FINALFUNC intasblob");
+
+        createTable("CREATE TABLE %s (a int primary key, b int)");
+        execute("INSERT INTO %s (a, b) VALUES (1, 1)");
+        execute("INSERT INTO %s (a, b) VALUES (2, 2)");
+        execute("INSERT INTO %s (a, b) VALUES (3, 3)");
+
+        assertRows(execute("SELECT " + aAggr + "(b) FROM %s"), row(Int32Serializer.instance.serialize(6)));
 
     }
 }
