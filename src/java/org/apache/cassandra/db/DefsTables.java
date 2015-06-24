@@ -410,7 +410,7 @@ public class DefsTables
 
         if (!StorageService.instance.isClientMode())
         {
-            Schema.instance.updateKeyspaceInstance(Keyspace.open(ksName).update(newKsm));
+            Keyspace.open(ksName).update(newKsm);
             MigrationManager.instance.notifyUpdateKeyspace(newKsm);
         }
     }

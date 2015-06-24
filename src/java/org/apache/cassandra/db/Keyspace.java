@@ -30,6 +30,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Future;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
@@ -72,11 +75,11 @@ public class Keyspace
             DatabaseDescriptor.createAllDirectories();
     }
 
-    public final KSMetaData metadata;
     public final OpOrder writeOrder = new OpOrder();
 
     /* ColumnFamilyStore per column family */
     private final ConcurrentMap<UUID, ColumnFamilyStore> columnFamilyStores = new ConcurrentHashMap<UUID, ColumnFamilyStore>();
+    private volatile KSMetaData metadata;
     private volatile AbstractReplicationStrategy replicationStrategy;
 
     public static final Function<String,Keyspace> keyspaceTransformer = new Function<String, Keyspace>()
@@ -300,9 +303,10 @@ public class Keyspace
     }
 
 
-    public Keyspace update(KSMetaData ksm)
+    public void update(KSMetaData ksm)
     {
-        return new Keyspace(ksm, metric, columnFamilyStores);
+        this.metadata = ksm;
+        createReplicationStrategy(ksm);
     }
 
     // best invoked on the compaction mananger.
@@ -473,5 +477,10 @@ public class Keyspace
     public String getName()
     {
         return metadata.name;
+    }
+
+    public KSMetaData getMetadata()
+    {
+        return metadata;
     }
 }
