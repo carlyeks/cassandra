@@ -439,7 +439,7 @@ public class Schema
 
         setKeyspaceDefinition(newKsm);
 
-        Schema.instance.updateKeyspaceInstance(Keyspace.open(ksName).update(newKsm));
+        Keyspace.open(ksName).update(newKsm);
         MigrationManager.instance.notifyUpdateKeyspace(newKsm);
     }
 

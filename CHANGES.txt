@@ -10,6 +10,10 @@
 
 
 2.2
+ * Update cqlsh for UDFs (CASSANDRA-7556)
+ * Change Windows kernel default timer resolution (CASSANDRA-9634)
+ * Deprected sstable2json and json2sstable (CASSANDRA-9618)
+ * Allow native functions in user-defined aggregates (CASSANDRA-9542)
  * Don't repair system_distributed by default (CASSANDRA-9621)
  * Fix mixing min, max, and count aggregates for blob type (CASSANRA-9622)
  * Rename class for DATE type in Java driver (CASSANDRA-9563)
@@ -22,10 +26,12 @@
  * Add logback metrics (CASSANDRA-9378)
  * Update and refactor ant test/test-compression to run the tests in parallel (CASSANDRA-9583)
 Merged from 2.1:
+ * ColumnFamilyStore.selectAndReference may block during compaction (CASSANDRA-9637)
  * Fix bug in cardinality check when compacting (CASSANDRA-9580)
  * Fix memory leak in Ref due to ConcurrentLinkedQueue.remove() behaviour (CASSANDRA-9549)
  * Make rebuild only run one at a time (CASSANDRA-9119)
 Merged from 2.0
+ * 'WITH WITH' in alter keyspace statements causes NPE (CASSANDRA-9565)
  * Expose some internals of SelectStatement for inspection (CASSANDRA-9532)
  * ArrivalWindow should use primitives (CASSANDRA-9496)
  * Periodically submit background compaction tasks (CASSANDRA-9592)
