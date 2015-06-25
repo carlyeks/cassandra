@@ -664,6 +664,12 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         }
     }
 
+    public void init()
+    {
+        initRowCache();
+        materializedViewManager.init();
+    }
+
     // must be called after all sstables are loaded since row cache merges all row versions
     public void initRowCache()
     {

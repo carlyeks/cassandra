@@ -127,7 +127,7 @@ public class Keyspace
 
                     // keyspace has to be constructed and in the cache before cacheRow can be called
                     for (ColumnFamilyStore cfs : keyspaceInstance.getColumnFamilyStores())
-                        cfs.initRowCache();
+                        cfs.init();
                 }
             }
         }

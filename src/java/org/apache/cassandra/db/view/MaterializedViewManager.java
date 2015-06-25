@@ -176,4 +176,9 @@ public class MaterializedViewManager
 
         return false;
     }
+
+    public void init()
+    {
+        reload();
+    }
 }
