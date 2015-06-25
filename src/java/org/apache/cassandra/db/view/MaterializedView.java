@@ -36,6 +36,7 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.MaterializedViewDefinition;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.ColumnIdentifier;
+import org.apache.cassandra.cql3.statements.CFProperties;
 import org.apache.cassandra.db.AbstractReadCommandBuilder.SinglePartitionSliceBuilder;
 import org.apache.cassandra.db.Clustering;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -67,6 +68,7 @@ public class MaterializedView
 
     final ColumnFamilyStore baseCfs;
     public final ColumnFamilyStore viewCfs;
+    public final List<ColumnDefinition> primaryKeyDefs;
     public final List<ColumnDefinition> targetDefs;
     public final boolean targetHasAllPrimaryKeyColumns;
     MaterializedViewBuilder builder;
@@ -78,9 +80,22 @@ public class MaterializedView
         this.baseCfs = baseCfs;
 
         name = definition.viewName;
-        targetDefs = new ArrayList<>(definition.partitionColumns.size());
+        primaryKeyDefs = new ArrayList<>(definition.partitionColumns.size());
+        targetDefs = new ArrayList<>(definition.partitionColumns.size()
+                                     + definition.clusteringColumns.size());
         boolean nonPrimaryKeyCol = false;
         for (ColumnIdentifier identifier : definition.partitionColumns)
+        {
+            ColumnDefinition cdef = baseCfs.metadata.getColumnDefinition(identifier);
+            assert cdef != null;
+            primaryKeyDefs.add(cdef);
+            targetDefs.add(cdef);
+
+            if(!cdef.isPrimaryKeyColumn())
+                nonPrimaryKeyCol = true;
+        }
+
+        for (ColumnIdentifier identifier: definition.clusteringColumns)
         {
             ColumnDefinition cdef = baseCfs.metadata.getColumnDefinition(identifier);
             assert cdef != null;
@@ -91,7 +106,7 @@ public class MaterializedView
         }
 
         targetHasAllPrimaryKeyColumns = !nonPrimaryKeyCol;
-        CFMetaData viewCfm = getCFMetaData(definition, baseCfs.metadata);
+        CFMetaData viewCfm = getCFMetaData(definition, baseCfs.metadata, new CFProperties());
         viewCfs = Schema.instance.getColumnFamilyStoreInstance(viewCfm.cfId);
     }
 
@@ -164,11 +179,11 @@ public class MaterializedView
 
     public DecoratedKey targetPartitionKey(MutationUnit mutationUnit, MutationUnit.Resolver resolver)
     {
-        Object[] partitionKey = new Object[targetDefs.size()];
+        Object[] partitionKey = new Object[primaryKeyDefs.size()];
 
         for (int i = 0; i < partitionKey.length; i++)
         {
-            ByteBuffer value = mutationUnit.clusteringValue(targetDefs.get(i), resolver);
+            ByteBuffer value = mutationUnit.clusteringValue(primaryKeyDefs.get(i), resolver);
 
             if (value == null)
                 return null;
@@ -195,7 +210,7 @@ public class MaterializedView
         boolean hasUpdate = false;
         for (ColumnDefinition target : targetDefs)
         {
-            if (!target.isPartitionKey() && mutationUnit.clusteringValue(target, MutationUnit.oldValueIfUpdated) != null)
+            if (!target.isPrimaryKeyColumn() && mutationUnit.clusteringValue(target, MutationUnit.oldValueIfUpdated) != null)
                 hasUpdate = true;
         }
 
@@ -469,7 +484,8 @@ public class MaterializedView
 
 
     public static CFMetaData getCFMetaData(MaterializedViewDefinition definition,
-                                           CFMetaData baseCf)
+                                           CFMetaData baseCf,
+                                           CFProperties properties)
     {
         Collection<ColumnDefinition> included = new ArrayList<>();
         for(ColumnIdentifier identifier : definition.included)
@@ -495,7 +511,7 @@ public class MaterializedView
             if (!target.isPartitionKey())
                 nonPkTarget = target;
 
-            viewBuilder.addPartitionKey(target.name, target.type);
+            viewBuilder.addPartitionKey(target.name, properties.getReversableType(targetIdentifier, target.type));
         }
 
         boolean includeAll = included.isEmpty();
@@ -503,7 +519,7 @@ public class MaterializedView
         for (ColumnIdentifier ident : definition.clusteringColumns)
         {
             ColumnDefinition column = baseCf.getColumnDefinition(ident);
-            viewBuilder.addClusteringColumn(ident, column.type);
+            viewBuilder.addClusteringColumn(ident, properties.getReversableType(ident, column.type));
         }
 
         for (ColumnDefinition column : baseCf.partitionColumns().regulars.columns)
@@ -532,7 +548,9 @@ public class MaterializedView
             }
         }
 
-        //FIXME: What should it do about the other metadata? compaction, compression etc?
-        return viewBuilder.build();
+        CFMetaData cfm = viewBuilder.build();
+        properties.properties.applyToCFMetadata(cfm);
+
+        return cfm;
     }
 }

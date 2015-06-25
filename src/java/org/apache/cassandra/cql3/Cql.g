@@ -665,7 +665,7 @@ createTableStatement returns [CreateTableStatement.RawStatement expr]
 
 cfamDefinition[CreateTableStatement.RawStatement expr]
     : '(' cfamColumns[expr] ( ',' cfamColumns[expr]? )* ')'
-      ( K_WITH cfamProperty[expr] ( K_AND cfamProperty[expr] )*)?
+      ( K_WITH cfamProperty[expr.properties] ( K_AND cfamProperty[expr.properties] )*)?
     ;
 
 cfamColumns[CreateTableStatement.RawStatement expr]
@@ -679,15 +679,15 @@ pkDef[CreateTableStatement.RawStatement expr]
     | '(' { List<ColumnIdentifier> l = new ArrayList<ColumnIdentifier>(); } k1=ident { l.add(k1); } ( ',' kn=ident { l.add(kn); } )* ')' { $expr.addKeyAliases(l); }
     ;
 
-cfamProperty[CreateTableStatement.RawStatement expr]
-    : property[expr.properties]
-    | K_COMPACT K_STORAGE { $expr.setCompactStorage(); }
-    | K_CLUSTERING K_ORDER K_BY '(' cfamOrdering[expr] (',' cfamOrdering[expr])* ')'
+cfamProperty[CFProperties props]
+    : property[props.properties]
+    | K_COMPACT K_STORAGE { $props.setCompactStorage(); }
+    | K_CLUSTERING K_ORDER K_BY '(' cfamOrdering[props] (',' cfamOrdering[props])* ')'
     ;
 
-cfamOrdering[CreateTableStatement.RawStatement expr]
+cfamOrdering[CFProperties props]
     @init{ boolean reversed=false; }
-    : k=ident (K_ASC | K_DESC { reversed=true;} ) { $expr.setOrdering(k, reversed); }
+    : k=ident (K_ASC | K_DESC { reversed=true;} ) { $props.setOrdering(k, reversed); }
     ;
 
 
@@ -735,7 +735,10 @@ indexIdent returns [IndexTarget.Raw id]
     ;
 
 /**
- * CREATE MATERIALIZED VIEW <viewName> AS SELECT (<columns>|*) FROM (<columnName>) PRIMARY KEY (<columns>);
+ * CREATE MATERIALIZED VIEW <viewName> AS
+ *  SELECT (<columns>|*) FROM (<columnName>)
+ *  PRIMARY KEY (<columns>)
+ *  WITH <property> = <value> AND ...;
  */
 createMaterializedViewStatement returns [CreateMaterializedViewStatement expr]
     @init {
@@ -747,8 +750,10 @@ createMaterializedViewStatement returns [CreateMaterializedViewStatement expr]
         select=selectStatement
         K_PRIMARY K_KEY (
         '(' '(' k1=cident { partitionKeys.add(k1); } ( ',' kn=cident { partitionKeys.add(kn); } )* ')' ( ',' c1=cident { compositeKeys.add(c1); } )* ')'
-    |   '(' k1=cident { partitionKeys.add(k1); } ( ',' cn=cident { compositeKeys.add(cn); } )* ')'  
-        ) { $expr = new CreateMaterializedViewStatement(cf, select, partitionKeys, compositeKeys, ifNotExists); }
+    |   '(' k1=cident { partitionKeys.add(k1); } ( ',' cn=cident { compositeKeys.add(cn); } )* ')'
+        )
+        { $expr = new CreateMaterializedViewStatement(cf, select, partitionKeys, compositeKeys, ifNotExists); }
+        ( K_WITH cfamProperty[expr.properties] ( K_AND cfamProperty[expr.properties] )*)?
     ;
 
 /**

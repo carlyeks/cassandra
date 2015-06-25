@@ -160,7 +160,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 {
                     if (indexDef.included.isEmpty())
                     {
-                        CFMetaData indexCfm = MaterializedView.getCFMetaData(indexDef, meta).copy();
+                        CFMetaData indexCfm = MaterializedView.getCFMetaData(indexDef, meta, new CFProperties()).copy();
                         componentIndex = indexCfm.isCompound() ? indexCfm.comparator.size() : null;
                         indexCfm.addColumnDefinition(isStatic
                                                      ? ColumnDefinition.staticDef(indexCfm, columnName.bytes, type, componentIndex)
@@ -226,7 +226,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 {
                     if (!mv.selects(columnName)) continue;
                     // We have to use the pre-adjusted CFM, otherwise we can't resolve the Index
-                    CFMetaData indexCfm = MaterializedView.getCFMetaData(mv, meta).copy();
+                    CFMetaData indexCfm = MaterializedView.getCFMetaData(mv, meta, new CFProperties()).copy();
                     indexCfm.addOrReplaceColumnDefinition(def.withNewType(validatorType));
 
                     if (materializedViewUpdates == null)
@@ -274,7 +274,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     if (!mv.selects(columnName)) continue;
 
                     // We have to use the pre-adjusted CFM, otherwise we can't resolve the Index
-                    CFMetaData viewCfm = MaterializedView.getCFMetaData(mv, meta).copy();
+                    CFMetaData viewCfm = MaterializedView.getCFMetaData(mv, meta, new CFProperties()).copy();
                     ColumnDefinition viewTarget = viewCfm.getColumnDefinition(def.name);
 
                     assert !viewTarget.isClusteringColumn() : "Materialized View clustering columns should be undroppable because they are PRIMARY KEY on data table";
@@ -335,7 +335,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     {
                         if (!mv.selects(from)) continue;
 
-                        CFMetaData indexCfm = MaterializedView.getCFMetaData(mv, meta).copy();
+                        CFMetaData indexCfm = MaterializedView.getCFMetaData(mv, meta, new CFProperties()).copy();
                         ColumnIdentifier indexFrom = entry.getKey().prepare(indexCfm);
                         ColumnIdentifier indexTo = entry.getValue().prepare(indexCfm);
                         indexCfm.renameColumn(indexFrom, indexTo);

@@ -51,6 +51,7 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
     private final SelectStatement.RawStatement select;
     private final List<ColumnIdentifier.Raw> partitionKeys;
     private final List<ColumnIdentifier.Raw> clusteringKeys;
+    public final CFProperties properties = new CFProperties();
     private final boolean ifNotExists;
 
     public CreateMaterializedViewStatement(CFName viewName,
@@ -100,6 +101,11 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         if (select.limit != null)
             throw new InvalidRequestException("Cannot use 'LIMIT' when defining a materialized view");
 
+        properties.validate();
+
+        if (properties.useCompactStorage)
+            throw new InvalidRequestException("Cannot use 'COMPACT STORAGE' when defining a materialized view");
+
         CFName base = select.cfName;
         // We enforce the keyspace because if the RF is different, the logic to wait for a
         // specific replica would break
@@ -108,7 +114,7 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 
         CFMetaData cfm = ThriftValidation.validateColumnFamily(base.getKeyspace(), base.getColumnFamily());
         if (cfm.isCounter())
-            throw new InvalidRequestException("Global indexes are not supported on counter tables");
+            throw new InvalidRequestException("Materialized views are not supported on counter tables");
 
         Set<ColumnIdentifier> included = new HashSet<>();
         for (RawSelector selector : select.selectClause)
@@ -161,7 +167,7 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
                 }
                 else
                 {
-                    throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view primary key", identifier));
+                    throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view partitioni key", identifier));
                 }
             }
 
@@ -174,7 +180,16 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 
             boolean isPk = basePrimaryKeyCols.contains(identifier);
             if (!isPk)
-                throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view primary key", identifier));
+            {
+                if (nonPkTarget == null)
+                {
+                    nonPkTarget = identifier;
+                }
+                else
+                {
+                    throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view clustering columns", identifier));
+                }
+            }
 
             targetClusteringColumns.add(identifier);
         }
@@ -202,7 +217,7 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 
         MaterializedViewDefinition definition = new MaterializedViewDefinition(base.getColumnFamily(), columnFamily(), targetPartitionKeys, targetClusteringColumns, included);
 
-        CFMetaData indexCf = MaterializedView.getCFMetaData(definition, cfm);
+        CFMetaData indexCf = MaterializedView.getCFMetaData(definition, cfm, properties);
         MigrationManager.announceNewColumnFamily(indexCf, isLocalOnly);
 
         CFMetaData newCfm = cfm.copy();
