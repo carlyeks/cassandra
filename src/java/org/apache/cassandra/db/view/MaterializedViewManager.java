@@ -96,7 +96,7 @@ public class MaterializedViewManager
             view.build();
     }
 
-    private void removeMaterializedView(String name)
+    public void removeMaterializedView(String name)
     {
         MaterializedView view = viewsByName.remove(name);
 

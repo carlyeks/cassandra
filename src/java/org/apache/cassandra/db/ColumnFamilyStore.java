@@ -434,7 +434,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
         for (MaterializedViewDefinition definition : metadata.getMaterializedViews().values())
         {
-            materializedViewManager.addMaterializedView(definition);
+            materializedViewManager.removeMaterializedView(definition.viewName);
         }
 
         latencyCalculator.cancel(false);
