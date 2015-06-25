@@ -167,7 +167,7 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
                 }
                 else
                 {
-                    throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view partitioni key", identifier));
+                    throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view partition key", identifier));
                 }
             }
 
