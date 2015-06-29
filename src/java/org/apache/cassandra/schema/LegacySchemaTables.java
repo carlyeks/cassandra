@@ -678,6 +678,8 @@ public class LegacySchemaTables
         for (CFMetaData schemaTable : All)
             mutation.add(PartitionUpdate.fullPartitionDelete(schemaTable, mutation.key(), timestamp, nowInSec));
         mutation.add(PartitionUpdate.fullPartitionDelete(SystemKeyspace.BuiltIndexes, mutation.key(), timestamp, nowInSec));
+        mutation.add(PartitionUpdate.fullPartitionDelete(SystemKeyspace.BuiltMaterializedViews, mutation.key(), timestamp, nowInSec));
+        mutation.add(PartitionUpdate.fullPartitionDelete(SystemKeyspace.MaterializedViewsBuilds, mutation.key(), timestamp, nowInSec));
         return mutation;
     }
 
@@ -1331,7 +1333,7 @@ public class LegacySchemaTables
     {
         RowUpdateBuilder.deleteRow(MaterializedViews, timestamp, mutation, table.cfName, materializedView.viewName);
         RowUpdateBuilder.deleteRow(SystemKeyspace.MaterializedViewsBuilds, timestamp, mutation, materializedView.viewName);
-        RowUpdateBuilder.deleteRow(SystemKeyspace.BuiltIndexes, timestamp, mutation, materializedView.viewName);
+        RowUpdateBuilder.deleteRow(SystemKeyspace.BuiltMaterializedViews, timestamp, mutation, materializedView.viewName);
     }
 
     /**

@@ -91,6 +91,7 @@ public final class SystemKeyspace
     public static final String SIZE_ESTIMATES = "size_estimates";
     public static final String AVAILABLE_RANGES = "available_ranges";
     public static final String MATERIALIZEDVIEW_BUILDS = "materializedviews_builds";
+    public static final String BUILT_MATERIALIZEDVIEWS = "built_materializedviews";
 
     public static final CFMetaData Hints =
         compile(HINTS,
@@ -263,6 +264,15 @@ public final class SystemKeyspace
                 + "generation_number int,"
                 + "PRIMARY KEY ((keyspace_name), index_name))");
 
+    public static final CFMetaData BuiltMaterializedViews =
+    compile(BUILT_MATERIALIZEDVIEWS,
+            "built materialized views",
+            "CREATE TABLE \"%s\" ("
+            + "host_id uuid,"
+            + "keyspace_name text,"
+            + "view_name text,"
+            + "PRIMARY KEY ((host_id, keyspace_name), view_name))");
+
     private static CFMetaData compile(String name, String description, String schema)
     {
         return CFMetaData.compile(String.format(schema, name), NAME)
@@ -286,7 +296,8 @@ public final class SystemKeyspace
                                            SSTableActivity,
                                            SizeEstimates,
                                            AvailableRanges,
-                                           MaterializedViewsBuilds));
+                                           MaterializedViewsBuilds,
+                                           BuiltMaterializedViews));
         return new KSMetaData(NAME, LocalStrategy.class, Collections.<String, String>emptyMap(), true, tables);
     }
 
@@ -436,6 +447,13 @@ public final class SystemKeyspace
         return CompactionHistoryTabularData.from(queryResultSet);
     }
 
+    public static void setMaterializedViewBuilt(String keyspaceName, String viewName)
+    {
+        String req = "INSERT INTO %s.\"%s\" (keyspace_name, view_name) VALUES (?, ?)";
+        executeInternal(String.format(req, NAME, BUILT_MATERIALIZEDVIEWS), keyspaceName, viewName);
+        forceBlockingFlush(BUILT_MATERIALIZEDVIEWS);
+    }
+
     public static void beginMaterializedViewBuild(String ksname, String indexname, int generationNumber)
     {
         executeInternal(String.format("INSERT INTO system.%s (keyspace_name, index_name, generation_number) VALUES (?, ?, ?)", MATERIALIZEDVIEW_BUILDS),
@@ -451,8 +469,8 @@ public final class SystemKeyspace
         // If we flush the delete first, we'll have to restart from the beginning.
         // Also, if the build succeeded, but the materailized view build failed, we will be able to skip the
         // materialized view build check next boot.
-        setIndexBuilt(ksname, indexname);
-        forceBlockingFlush(BUILT_INDEXES);
+        setMaterializedViewBuilt(ksname, indexname);
+        forceBlockingFlush(BUILT_MATERIALIZEDVIEWS);
         executeInternal(String.format("DELETE FROM system.%s WHERE keyspace_name = ? AND index_name = ?", MATERIALIZEDVIEW_BUILDS), ksname, indexname);
         forceBlockingFlush(MATERIALIZEDVIEW_BUILDS);
     }
