@@ -3,13 +3,16 @@ package org.apache.cassandra.cql3.selection;
 import java.util.Collections;
 
 import com.google.common.collect.ImmutableList;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import org.apache.cassandra.config.ColumnDefinition;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.marshal.*;
+import org.apache.cassandra.dht.ByteOrderedPartitioner;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -25,6 +28,12 @@ public class SelectionColumnMappingTest extends CQLTester
     UserType userType;
     String functionName;
 
+    @BeforeClass
+    public static void setUpClass()
+    {
+        DatabaseDescriptor.setPartitioner(ByteOrderedPartitioner.instance);
+    }
+
     @Test
     public void testSelectionColumnMapping() throws Throwable
     {
@@ -37,7 +46,7 @@ public class SelectionColumnMappingTest extends CQLTester
                                     " v1 int," +
                                     " v2 ascii," +
                                     " v3 frozen<" + typeName + ">)");
-        userType = Schema.instance.getKSMetaData(KEYSPACE).userTypes.getType(ByteBufferUtil.bytes(typeName));
+        userType = Schema.instance.getKSMetaData(KEYSPACE).types.get(ByteBufferUtil.bytes(typeName)).get();
         functionName = createFunction(KEYSPACE, "int, ascii",
                                       "CREATE FUNCTION %s (i int, a ascii) " +
                                       "CALLED ON NULL INPUT " +

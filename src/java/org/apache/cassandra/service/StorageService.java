@@ -67,21 +67,7 @@ import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.*;
-import org.apache.cassandra.db.BatchlogManager;
-import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.CounterMutationVerbHandler;
-import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.DefinitionsUpdateVerbHandler;
-import org.apache.cassandra.db.HintedHandOffManager;
-import org.apache.cassandra.db.Keyspace;
-import org.apache.cassandra.db.MigrationRequestVerbHandler;
-import org.apache.cassandra.db.MutationVerbHandler;
-import org.apache.cassandra.db.ReadRepairVerbHandler;
-import org.apache.cassandra.db.ReadVerbHandler;
-import org.apache.cassandra.db.SchemaCheckVerbHandler;
-import org.apache.cassandra.db.SnapshotDetailsTabularData;
-import org.apache.cassandra.db.SystemKeyspace;
-import org.apache.cassandra.db.TruncateVerbHandler;
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.dht.BootStrapper;
@@ -125,6 +111,7 @@ import org.apache.cassandra.repair.RepairParallelism;
 import org.apache.cassandra.repair.RepairRunnable;
 import org.apache.cassandra.repair.SystemDistributedKeyspace;
 import org.apache.cassandra.repair.messages.RepairOption;
+import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.service.paxos.CommitVerbHandler;
 import org.apache.cassandra.service.paxos.PrepareVerbHandler;
 import org.apache.cassandra.service.paxos.ProposeVerbHandler;
@@ -311,9 +298,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         /* register the verb handlers */
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.MUTATION, new MutationVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.READ_REPAIR, new ReadRepairVerbHandler());
-        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.READ, new ReadVerbHandler());
-        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.RANGE_SLICE, new RangeSliceVerbHandler());
-        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.PAGED_RANGE, new RangeSliceVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.READ, new ReadCommandVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.RANGE_SLICE, new ReadCommandVerbHandler());
+        MessagingService.instance().registerVerbHandlers(MessagingService.Verb.PAGED_RANGE, new ReadCommandVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.COUNTER_MUTATION, new CounterMutationVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.TRUNCATE, new TruncateVerbHandler());
         MessagingService.instance().registerVerbHandlers(MessagingService.Verb.PAXOS_PREPARE, new PrepareVerbHandler());
@@ -658,12 +645,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 List<Future<?>> flushes = new ArrayList<>();
                 for (Keyspace keyspace : Keyspace.all())
                 {
-                    KSMetaData ksm = Schema.instance.getKSMetaData(keyspace.getName());
-                    if (!ksm.durableWrites)
-                    {
+                    KeyspaceMetadata ksm = Schema.instance.getKSMetaData(keyspace.getName());
+                    if (!ksm.params.durableWrites)
                         for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
                             flushes.add(cfs.forceFlush());
-                    }
                 }
                 try
                 {
@@ -960,10 +945,10 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
         // if we don't have system_traces keyspace at this point, then create it manually
         if (Schema.instance.getKSMetaData(TraceKeyspace.NAME) == null)
-            maybeAddKeyspace(TraceKeyspace.definition());
+            maybeAddKeyspace(TraceKeyspace.metadata());
 
         if (Schema.instance.getKSMetaData(SystemDistributedKeyspace.NAME) == null)
-            MigrationManager.announceNewKeyspace(SystemDistributedKeyspace.definition(), 0, false);
+            MigrationManager.announceNewKeyspace(SystemDistributedKeyspace.metadata(), 0, false);
 
         if (!isSurveyMode)
         {
@@ -1033,7 +1018,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         {
             // if we don't have system_auth keyspace at this point, then create it
             if (Schema.instance.getKSMetaData(AuthKeyspace.NAME) == null)
-                maybeAddKeyspace(AuthKeyspace.definition());
+                maybeAddKeyspace(AuthKeyspace.metadata());
         }
         catch (Exception e)
         {
@@ -1044,9 +1029,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         // the ks exists with the only the legacy tables defined.
         // Also, the addKeyspace above can be racy if multiple nodes are started
         // concurrently - see CASSANDRA-9201
-        for (Map.Entry<String, CFMetaData> table : AuthKeyspace.definition().cfMetaData().entrySet())
-            if (Schema.instance.getCFMetaData(AuthKeyspace.NAME, table.getKey()) == null)
-                maybeAddTable(table.getValue());
+        for (CFMetaData table : AuthKeyspace.metadata().tables)
+            if (Schema.instance.getCFMetaData(table.ksName, table.cfName) == null)
+                maybeAddTable(table);
 
         DatabaseDescriptor.getRoleManager().setup();
         DatabaseDescriptor.getAuthenticator().setup();
@@ -1066,7 +1051,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         }
     }
 
-    private void maybeAddKeyspace(KSMetaData ksm)
+    private void maybeAddKeyspace(KeyspaceMetadata ksm)
     {
         try
         {
@@ -3134,11 +3119,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      */
     public List<InetAddress> getNaturalEndpoints(String keyspaceName, String cf, String key)
     {
-        KSMetaData ksMetaData = Schema.instance.getKSMetaData(keyspaceName);
+        KeyspaceMetadata ksMetaData = Schema.instance.getKSMetaData(keyspaceName);
         if (ksMetaData == null)
             throw new IllegalArgumentException("Unknown keyspace '" + keyspaceName + "'");
 
-        CFMetaData cfMetaData = ksMetaData.cfMetaData().get(cf);
+        CFMetaData cfMetaData = ksMetaData.tables.getNullable(cf);
         if (cfMetaData == null)
             throw new IllegalArgumentException("Unknown table '" + cf + "' in keyspace '" + keyspaceName + "'");
 
@@ -3901,7 +3886,8 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     }
 
     // Never ever do this at home. Used by tests.
-    IPartitioner setPartitionerUnsafe(IPartitioner newPartitioner)
+    @VisibleForTesting
+    public IPartitioner setPartitionerUnsafe(IPartitioner newPartitioner)
     {
         IPartitioner oldPartitioner = DatabaseDescriptor.getPartitioner();
         DatabaseDescriptor.setPartitioner(newPartitioner);

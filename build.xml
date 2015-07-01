@@ -38,7 +38,6 @@
     <property name="build.src.resources" value="${basedir}/src/resources"/>
     <property name="build.src.gen-java" value="${basedir}/src/gen-java"/>
     <property name="build.lib" value="${basedir}/lib"/>
-    <property name="build.tools.lib" value="${basedir}/tools/lib"/>
     <property name="build.dir" value="${basedir}/build"/>
     <property name="build.dir.lib" value="${basedir}/build/lib"/>
     <property name="build.test.dir" value="${build.dir}/test"/>
@@ -95,7 +94,7 @@
     <property name="maven-repository-url" value="https://repository.apache.org/content/repositories/snapshots"/>
     <property name="maven-repository-id" value="apache.snapshots.https"/>
 
-    <property name="test.timeout" value="60000" />
+    <property name="test.timeout" value="1200000" />
     <property name="test.long.timeout" value="600000" />
     <property name="test.burn.timeout" value="600000" />
 
@@ -785,9 +784,6 @@
                     <fileset dir="${build.lib}">
                         <include name="**/*.jar" />
                     </fileset>
-                    <fileset dir="${build.tools.lib}">
-                        <include name="**/*.jar" />
-                    </fileset>
                 </path>
             </classpath>
         </javac>
@@ -1010,9 +1006,6 @@
       </copy>
       <copy todir="${dist.dir}/tools/lib">
         <fileset dir="${build.dir}/tools/lib/">
-            <include name="*.jar" />
-        </fileset>
-        <fileset dir="${build.tools.lib}">
             <include name="*.jar" />
         </fileset>
       </copy>
@@ -1717,12 +1710,9 @@
   	<path id="idea-project-libs-path">
   	 <fileset dir="lib">
   	    <include name="**/*.jar" />
-     </fileset>
+	 </fileset>
  	 <fileset dir="build/lib/jars">
   	    <include name="**/*.jar" />
-  	 </fileset>
-  	 <fileset dir="tools/lib">
-  	     <include name="**/*.jar" />
   	 </fileset>
   	</path>
     <mkdir dir=".idea"/>
@@ -1927,9 +1917,6 @@
      </fileset>
  	 <fileset dir="build/lib/jars">
   	    <include name="**/*.jar" />
-  	 </fileset>
-  	 <fileset dir="tools/lib">
-  	     <include name="**/*.jar" />
   	 </fileset>
   	</path>
   	<property name="eclipse-project-libs" refid="eclipse-project-libs-path"/>

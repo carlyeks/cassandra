@@ -1341,8 +1341,14 @@ public class DatabaseDescriptor
     }
 
     @VisibleForTesting
-    public static void setAutoSnapshot(boolean autoSnapshot) {
+    public static void setAutoSnapshot(boolean autoSnapshot)
+    {
         conf.auto_snapshot = autoSnapshot;
+    }
+    @VisibleForTesting
+    public static boolean getAutoSnapshot()
+    {
+        return conf.auto_snapshot;
     }
 
     public static boolean isAutoBootstrap()
@@ -1552,6 +1558,12 @@ public class DatabaseDescriptor
     public static long getRowCacheSizeInMB()
     {
         return conf.row_cache_size_in_mb;
+    }
+
+    @VisibleForTesting
+    public static void setRowCacheSizeInMB(long val)
+    {
+        conf.row_cache_size_in_mb = val;
     }
 
     public static int getRowCacheSavePeriod()

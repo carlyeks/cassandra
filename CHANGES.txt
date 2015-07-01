@@ -1,5 +1,4 @@
-3.0:
- * Improve log output from unit tests (CASSANDRA-9528)
+3.0
  * Add algorithmic token allocation (CASSANDRA-7032)
  * Add nodetool command to replay batchlog (CASSANDRA-9547)
  * Make file buffer cache independent of paths being read (CASSANDRA-8897)
@@ -12,6 +11,9 @@
 
 
 2.2
+ * (cqlsh) Allow setting the initial connection timeout (CASSANDRA-9601)
+ * BulkLoader has --transport-factory option but does not use it (CASSANDRA-9675)
+ * Allow JMX over SSL directly from nodetool (CASSANDRA-9090)
  * Update cqlsh for UDFs (CASSANDRA-7556)
  * Change Windows kernel default timer resolution (CASSANDRA-9634)
  * Deprected sstable2json and json2sstable (CASSANDRA-9618)
@@ -28,11 +30,23 @@
  * Add logback metrics (CASSANDRA-9378)
  * Update and refactor ant test/test-compression to run the tests in parallel (CASSANDRA-9583)
 Merged from 2.1:
+ * Update internal python driver for cqlsh (CASSANDRA-9064)
+ * Avoids ballot clash in Paxos (CASSANDRA-9649)
+ * Fix IndexOutOfBoundsException when inserting tuple with too many
+   elements using the string literal notation (CASSANDRA-9559)
+ * Enable describe on indices (CASSANDRA-7814)
+ * Fix incorrect result for IN queries where column not found (CASSANDRA-9540)
  * ColumnFamilyStore.selectAndReference may block during compaction (CASSANDRA-9637)
  * Fix bug in cardinality check when compacting (CASSANDRA-9580)
  * Fix memory leak in Ref due to ConcurrentLinkedQueue.remove() behaviour (CASSANDRA-9549)
  * Make rebuild only run one at a time (CASSANDRA-9119)
-Merged from 2.0
+Merged from 2.0:
+ * Improve trace messages for RR (CASSANDRA-9479)
+ * Fix suboptimal secondary index selection when restricted
+   clustering column is also indexed (CASSANDRA-9631)
+ * (cqlsh) Add min_threshold to DTCS option autocomplete (CASSANDRA-9385)
+ * Fix error message when attempting to create an index on a column
+   in a COMPACT STORAGE table with clustering columns (CASSANDRA-9527)
  * 'WITH WITH' in alter keyspace statements causes NPE (CASSANDRA-9565)
  * Expose some internals of SelectStatement for inspection (CASSANDRA-9532)
  * ArrivalWindow should use primitives (CASSANDRA-9496)
