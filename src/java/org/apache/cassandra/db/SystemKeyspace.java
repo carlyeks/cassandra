@@ -165,7 +165,7 @@ public class SystemKeyspace
                                          DatabaseDescriptor.getPartitioner().getClass().getName(),
                                          DatabaseDescriptor.getRpcAddress().getHostAddress(),
                                          FBUtilities.getBroadcastAddress().getHostAddress(),
-                                         DatabaseDescriptor.getListenAddress().getHostAddress()));
+                                         FBUtilities.getLocalAddress().getHostAddress()));
     }
 
     /**
