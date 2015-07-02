@@ -150,7 +150,7 @@ public class SystemKeyspace
                             DatabaseDescriptor.getPartitioner().getClass().getName(),
                             DatabaseDescriptor.getRpcAddress(),
                             FBUtilities.getBroadcastAddress(),
-                            DatabaseDescriptor.getListenAddress());
+                            FBUtilities.getLocalAddress());
     }
 
     // TODO: In 3.0, remove this and the index_interval column from system.schema_columnfamilies
