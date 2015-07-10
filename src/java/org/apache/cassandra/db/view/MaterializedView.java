@@ -55,6 +55,14 @@ import org.apache.cassandra.service.pager.QueryPager;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
+/**
+ * A Materialized View copies data from a "base" table into a view table which can be queried independently from the
+ * base. Every mutation which targets the base table must be fed through the {@link MaterializedViewManager} to ensure
+ * that if a view needs to be updated, the mutations are properly created.
+ *
+ * When a view is defined, a {@link MaterializedViewDefinition} is created and associated with a table. The
+ * {@link ColumnFamilyStore}
+ */
 public class MaterializedView
 {
     public final String name;
@@ -82,16 +90,21 @@ public class MaterializedView
         viewCfs = Schema.instance.getColumnFamilyStoreInstance(viewCfm.cfId);
     }
 
-    private boolean resolveAndAddColumn(ColumnIdentifier identifier, List<ColumnDefinition>... definitions)
+    private boolean resolveAndAddColumns(Iterable<ColumnIdentifier> columns, List<ColumnDefinition>... definitions)
     {
-        ColumnDefinition cdef = baseCfs.metadata.getColumnDefinition(identifier);
-        assert cdef != null : "Could not resolve column " + identifier.toString();
+        boolean allArePrimaryKeys = true;
+        for (ColumnIdentifier identifier: columns)
+        {
+            ColumnDefinition cdef = baseCfs.metadata.getColumnDefinition(identifier);
+            assert cdef != null : "Could not resolve column " + identifier.toString();
 
-        for (List<ColumnDefinition> list: definitions) {
-            list.add(cdef);
+            for (List<ColumnDefinition> list: definitions) {
+                list.add(cdef);
+            }
+
+            allArePrimaryKeys = allArePrimaryKeys && cdef.isPrimaryKeyColumn();
         }
-
-        return cdef.isPrimaryKeyColumn();
+        return allArePrimaryKeys;
     }
 
     /**
@@ -107,21 +120,10 @@ public class MaterializedView
                                                                 + definition.clusteringColumns.size());
         List<ColumnDefinition> baseComplexColumns = new ArrayList<>();
 
-        boolean allPrimaryKeyColumns = true;
-
         // We only add the partition columns to the partitions list, but both partition columns and clustering
         // columns are added to the primary keys list
-        for (ColumnIdentifier identifier : definition.partitionColumns)
-        {
-            allPrimaryKeyColumns = resolveAndAddColumn(identifier, primaryKeyDefs, partitionDefs)
-                                   && allPrimaryKeyColumns;
-        }
-
-        for (ColumnIdentifier identifier : definition.clusteringColumns)
-        {
-            allPrimaryKeyColumns = resolveAndAddColumn(identifier, primaryKeyDefs)
-                                   && allPrimaryKeyColumns;
-        }
+        boolean partitionAllPrimaryKeyColumns = resolveAndAddColumns(definition.partitionColumns, primaryKeyDefs, partitionDefs);
+        boolean clusteringAllPrimaryKeyColumns = resolveAndAddColumns(definition.clusteringColumns, primaryKeyDefs);
 
         for (ColumnDefinition cdef : baseCfs.metadata.allColumns())
         {
@@ -135,35 +137,39 @@ public class MaterializedView
         this.primaryKeyDefs.set(primaryKeyDefs);
         this.baseComplexColumns.set(baseComplexColumns);
 
-        return allPrimaryKeyColumns;
+        return partitionAllPrimaryKeyColumns && clusteringAllPrimaryKeyColumns;
     }
 
     /**
-     * Check to see if any value that is part of the view is updated. If so, we possibly need to mutate the view.
+     * Check to see if the update could possibly modify a view. Cases where the view may be updated are:
+     * <ul>
+     *     <li>View selects all columns</li>
+     *     <li>Update contains any range tombstones</li>
+     *     <li>Update touches one of the columns included in the view</li>
+     * </ul>
      *
-     * @param upd Column family to check for selected values with
-     * @return True if any of the selected values are contained in the column family.
+     * If the update contains any range tombstones, there is a possibility that it will not touch a range that is
+     * currently included in the view.
+     *
+     * @return true if {@param upd} modifies a column included in the view
      */
-    public boolean cfModifiesSelectedColumn(AbstractPartitionData upd)
+    public boolean updateModifiesView(AbstractPartitionData upd)
     {
-        // If we are including all of the columns, then any non-empty column family will need to be selected
+        // If we are including all of the columns, then any update will be included
         if (includeAll)
             return true;
 
         // If there are range tombstones, tombstones will also need to be generated for the materialized view
+        // This requires a query of the base rows and generating tombstones for all of those values
         if (!upd.deletionInfo().isLive())
             return true;
 
-        Iterator<Row> rowIterator = upd.iterator();
-
-        while (rowIterator.hasNext())
+        // Check whether the update touches any of the columns included in the view
+        for (Row row : upd)
         {
-            Row row = rowIterator.next();
-
-            Iterator<Cell> cellIterator = row.iterator();
-            while (cellIterator.hasNext())
+            for (Cell cell : row)
             {
-                if (viewCfs.metadata.getColumnDefinition(cellIterator.next().column().name) != null)
+                if (viewCfs.metadata.getColumnDefinition(cell.column().name) != null)
                     return true;
             }
         }
@@ -444,7 +450,7 @@ public class MaterializedView
 
     public Collection<Mutation> createMutations(ByteBuffer key, AbstractPartitionData upd, boolean isBuilding)
     {
-        if (!cfModifiesSelectedColumn(upd))
+        if (!updateModifiesView(upd))
         {
             return null;
         }

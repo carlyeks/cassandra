@@ -44,6 +44,15 @@ import org.apache.cassandra.exceptions.WriteTimeoutException;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 
+/**
+ * Manages {@link MaterializedView}'s for a single {@link ColumnFamilyStore}. All of the materialized views for that
+ * table are created when this manager is initialized.
+ *
+ * The main purposes of the manager are to provide a single location for updates to be vetted to see whether they update
+ * any views {@link MaterializedViewManager#updateModifiesView(PartitionUpdate)}, provide locks to prevent multiple
+ * updates from creating incoherent updates in the view {@link MaterializedViewManager#acquireLockFor(ByteBuffer)}, and
+ * to affect change on the view.
+ */
 public class MaterializedViewManager
 {
     private static final Striped<Lock> LOCKS = Striped.lazyWeakLock(DatabaseDescriptor.getConcurrentWriters() * 1024);
@@ -126,7 +135,15 @@ public class MaterializedViewManager
         viewsByName.put(definition.viewName, view);
     }
 
-    public void pushReplicaMutations(ByteBuffer key, PartitionUpdate cf) throws UnavailableException, OverloadedException, WriteTimeoutException
+    /**
+     * Calculates and pushes updates to the views replicas. The replicas
+     * @param key
+     * @param cf
+     * @throws UnavailableException
+     * @throws OverloadedException
+     * @throws WriteTimeoutException
+     */
+    public void pushReplicaUpdates(ByteBuffer key, PartitionUpdate cf) throws UnavailableException, OverloadedException, WriteTimeoutException
     {
         // This happens when we are replaying from commitlog. In that case, we have already sent this commit off to the
         // view node.
@@ -149,11 +166,11 @@ public class MaterializedViewManager
         }
     }
 
-    public boolean cfModifiesSelectedColumn(PartitionUpdate upd)
+    public boolean updateModifiesView(PartitionUpdate upd)
     {
         for (MaterializedView view : allViews())
         {
-            if (view.cfModifiesSelectedColumn(upd))
+            if (view.updateModifiesView(upd))
                 return true;
         }
         return false;
@@ -177,7 +194,7 @@ public class MaterializedViewManager
             {
                 MaterializedViewManager viewManager = Keyspace.open(cf.metadata().ksName)
                                                               .getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
-                if (viewManager.cfModifiesSelectedColumn(cf))
+                if (viewManager.updateModifiesView(cf))
                     return true;
             }
         }

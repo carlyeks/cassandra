@@ -40,13 +40,10 @@ import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.index.SecondaryIndex;
 import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.db.view.MaterializedViewManager;
-import org.apache.cassandra.exceptions.OverloadedException;
-import org.apache.cassandra.exceptions.UnavailableException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
-import org.apache.cassandra.metrics.ThreadPoolMetrics;
 import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.tracing.Tracing;
@@ -446,10 +443,10 @@ public class Keyspace
 
                 try
                 {
-                    if (updateIndexes && cfs.materializedViewManager.cfModifiesSelectedColumn(upd))
+                    if (updateIndexes && cfs.materializedViewManager.updateModifiesView(upd))
                     {
                         Tracing.trace("Create materialized view mutations from replica");
-                        cfs.materializedViewManager.pushReplicaMutations(partitionKey.getKey(), upd);
+                        cfs.materializedViewManager.pushReplicaUpdates(partitionKey.getKey(), upd);
                     }
                 }
                 catch (Exception e)

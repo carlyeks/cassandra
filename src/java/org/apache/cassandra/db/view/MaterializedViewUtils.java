@@ -31,6 +31,27 @@ public final class MaterializedViewUtils
     {
     }
 
+    /**
+     * Calculate the natural endpoint for the view.
+     *
+     * The view natural endpoint is the endpint which has the same cardinality as this node in the replication factor.
+     * The cardinality is the number at which this node would store a piece of data, given the change in replication
+     * factor.
+     *
+     * For example, if we have the following ring:
+     *   A, T1 -> B, T2 -> C, T3 -> A
+     *
+     * For the token T1, at RF=1, A would be included, so A's cardinality for T1 is 1. For the token T1, at RF=2, B would
+     * be included, so B's cardinality for token T1 is 2. For token T3, at RF = 2, A would be included, so A's cardinality
+     * for T3 is 2.
+     *
+     * For a view whose base token is T1 and whose view token is T3, the pairings between the nodes would be:
+     *  A writes to C (A's cardinality is 1 for T1, and C's cardinality is 1 for T3)
+     *  B writes to A (B's cardinality is 2 for T1, and A's cardinality is 2 for T3)
+     *  C writes to B (C's cardinality is 3 for T1, and B's cardinality is 3 for T3)
+     *
+     * @throws RuntimeException if this method is called using a base token which does not belong to this replica
+     */
     public static InetAddress getViewNaturalEndpoint(String keyspaceName, Token baseToken, Token viewToken)
     {
         List<InetAddress> baseNaturalEndpoints = StorageService.instance.getNaturalEndpoints(keyspaceName, baseToken);
