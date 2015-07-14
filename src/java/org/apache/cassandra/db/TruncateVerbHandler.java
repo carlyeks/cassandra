@@ -40,10 +40,6 @@ public class TruncateVerbHandler implements IVerbHandler<Truncation>
         {
             ColumnFamilyStore cfs = Keyspace.open(t.keyspace).getColumnFamilyStore(t.columnFamily);
             cfs.truncateBlocking();
-            for (MaterializedView materializedView: cfs.materializedViewManager.allViews())
-            {
-                materializedView.viewCfs.truncateBlocking();
-            }
         }
         catch (Exception e)
         {

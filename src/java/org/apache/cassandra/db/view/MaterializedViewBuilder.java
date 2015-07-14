@@ -193,10 +193,18 @@ public class MaterializedViewBuilder extends CompactionInfo.Holder
     {
         long rangesLeft = 0, rangesTotal = 0;
         Token lastToken = prevToken;
+
+        // This approximation is not very accurate, but since we do not have a method which allows us to calculate the
+        // percentage of a range covered by a second range, this is the best approximation that we can calculate.
+        // Instead, we just count the total number of ranges that haven't been seen by the node (we use the order of
+        // the tokens to determine whether they have been seen yet or not), and the total number of ranges that a node
+        // has.
         for (Range<Token> range : StorageService.instance.getLocalRanges(baseCfs.keyspace.getName()))
         {
             rangesLeft++;
             rangesTotal++;
+            // This will reset rangesLeft, so that the number of ranges left will be less than the total ranges at the
+            // end of the method.
             if (lastToken == null || range.contains(lastToken))
                 rangesLeft = 0;
         }

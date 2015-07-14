@@ -49,7 +49,7 @@ import org.apache.cassandra.service.StorageService;
  * table are created when this manager is initialized.
  *
  * The main purposes of the manager are to provide a single location for updates to be vetted to see whether they update
- * any views {@link MaterializedViewManager#updateModifiesView(PartitionUpdate)}, provide locks to prevent multiple
+ * any views {@link MaterializedViewManager#updateAffectsView(PartitionUpdate)}, provide locks to prevent multiple
  * updates from creating incoherent updates in the view {@link MaterializedViewManager#acquireLockFor(ByteBuffer)}, and
  * to affect change on the view.
  */
@@ -166,11 +166,11 @@ public class MaterializedViewManager
         }
     }
 
-    public boolean updateModifiesView(PartitionUpdate upd)
+    public boolean updateAffectsView(PartitionUpdate upd)
     {
         for (MaterializedView view : allViews())
         {
-            if (view.updateModifiesView(upd))
+            if (view.updateAffectsView(upd))
                 return true;
         }
         return false;
@@ -186,7 +186,7 @@ public class MaterializedViewManager
         return null;
     }
 
-    public static boolean touchesSelectedColumn(Collection<? extends IMutation> mutations)
+    public static boolean updatesAffectView(Collection<? extends IMutation> mutations)
     {
         for (IMutation mutation : mutations)
         {
@@ -194,7 +194,7 @@ public class MaterializedViewManager
             {
                 MaterializedViewManager viewManager = Keyspace.open(cf.metadata().ksName)
                                                               .getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
-                if (viewManager.updateModifiesView(cf))
+                if (viewManager.updateAffectsView(cf))
                     return true;
             }
         }

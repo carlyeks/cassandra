@@ -21,8 +21,9 @@ package org.apache.cassandra.db.view;
 import java.net.InetAddress;
 import java.util.List;
 
+import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.dht.Token;
-import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.utils.FBUtilities;
 
 public final class MaterializedViewUtils
@@ -54,9 +55,14 @@ public final class MaterializedViewUtils
      */
     public static InetAddress getViewNaturalEndpoint(String keyspaceName, Token baseToken, Token viewToken)
     {
-        List<InetAddress> baseNaturalEndpoints = StorageService.instance.getNaturalEndpoints(keyspaceName, baseToken);
-        List<InetAddress> viewNaturalEndpoints = StorageService.instance.getNaturalEndpoints(keyspaceName, viewToken);
+        AbstractReplicationStrategy replicationStrategy = Keyspace.open(keyspaceName).getReplicationStrategy();
+        List<InetAddress> baseNaturalEndpoints = replicationStrategy.getNaturalEndpoints(baseToken);
+        List<InetAddress> viewNaturalEndpoints = replicationStrategy.getNaturalEndpoints(viewToken);
 
+        // The replication strategy will be the same for the base and the view, as they must belong to the same keyspace.
+        // Since the same replication strategy is used, the same placement should be used and we should get the same
+        // number of replicas for all of the tokens in the ring.
+        assert baseNaturalEndpoints.size() == viewNaturalEndpoints.size() : "Replication strategy should have the same number of endpoints for the base and the view";
         int baseIdx = baseNaturalEndpoints.indexOf(FBUtilities.getBroadcastAddress());
         if (baseIdx < 0)
             throw new RuntimeException("Trying to get the view natural endpoint on a non-data replica");

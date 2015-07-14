@@ -22,11 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.exceptions.NoHostAvailableException;
@@ -104,13 +102,14 @@ public class MaterializedViewLongTest extends CQLTester
         for (int i = 0; i < writers; i++)
             threads[i].join();
 
-
         for (int i = 0; i < writers * insertsPerWriter; i++)
         {
             if (executeNet(protocolVersion, "SELECT COUNT(*) FROM system.batchlog").one().getLong(0) == 0)
                 break;
             try
             {
+                // This will throw exceptions whenever there are exceptions trying to push the materialized view values
+                // out, caused by the view becoming overwhelmed.
                 BatchlogManager.instance.startBatchlogReplay().get();
             }
             catch (Throwable ignore)
@@ -159,33 +158,6 @@ public class MaterializedViewLongTest extends CQLTester
         {
             throw new AssertionError(String.format("Single row had c = %d, expected %d", rows.get(0).getInt("c"), value));
         }
-
-        dropTable("DROP MATERIALIZED VIEW " + keyspace() + ".mv");
-    }
-
-    @Test
-    public void ttlTest() throws Throwable
-    {
-        createTable("CREATE TABLE %s (" +
-                    "a int," +
-                    "b int," +
-                    "c int," +
-                    "d int," +
-                    "PRIMARY KEY (a, b))");
-
-        dropTable("DROP MATERIALIZED VIEW IF EXISTS " + keyspace() + ".mv");
-        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv AS SELECT * FROM %s PRIMARY KEY (c)");
-
-
-        executeNet(protocolVersion, "INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?) USING TTL 5", 1, 1, 1, 1);
-
-        Thread.sleep(TimeUnit.SECONDS.toMillis(3));
-        executeNet(protocolVersion, "INSERT INTO %s (a, b, c) VALUES (?, ?, ?)", 1, 1, 2);
-
-        Thread.sleep(TimeUnit.SECONDS.toMillis(3));
-        List<Row> results = executeNet(protocolVersion, "SELECT d FROM " + keyspace() + ".mv WHERE c = 2 AND a = 1 AND b = 1").all();
-        assert results.size() == 1;
-        assert results.get(0).isNull(0);
 
         dropTable("DROP MATERIALIZED VIEW " + keyspace() + ".mv");
     }

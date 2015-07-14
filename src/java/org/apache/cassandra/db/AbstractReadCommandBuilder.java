@@ -181,13 +181,12 @@ public abstract class AbstractReadCommandBuilder
 
     protected ColumnFilter makeColumnFilter()
     {
-        CFMetaData metadata = cfs.metadata;
         if (columns == null || columns.isEmpty())
-            return ColumnFilter.all(metadata);
+            return ColumnFilter.all(cfs.metadata);
 
         ColumnFilter.Builder filter = ColumnFilter.selectionBuilder();
         for (ColumnIdentifier column : columns)
-            filter.add(metadata.getColumnDefinition(column));
+            filter.add(cfs.metadata.getColumnDefinition(column));
         return filter.build();
     }
 

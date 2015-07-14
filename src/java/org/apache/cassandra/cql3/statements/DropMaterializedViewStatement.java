@@ -104,11 +104,12 @@ public class DropMaterializedViewStatement extends SchemaAlteringStatement
             throw new InvalidRequestException("View '" + cfName + "' could not be found in any of the tables of keyspace '" + keyspace() + '\'');
     }
 
+    /**
+     * If there is a materialized view already defined with this name, we return the definition associated with it,
+     * otherwise null.
+     */
     private MaterializedViewDefinition findMaterializedView(CFMetaData cfm)
     {
-        for (MaterializedViewDefinition definition: cfm.getMaterializedViews().values())
-            if (definition.viewName.equals(columnFamily()))
-                return definition;
-        return null;
+        return cfm.getMaterializedViews().get(columnFamily());
     }
 }

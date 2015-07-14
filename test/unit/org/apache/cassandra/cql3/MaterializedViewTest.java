@@ -18,38 +18,30 @@
 
 package org.apache.cassandra.cql3;
 
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.Session;
+import com.datastax.driver.core.Row;
 import com.datastax.driver.core.exceptions.InvalidQueryException;
 import junit.framework.Assert;
-import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.SystemKeyspace;
-import org.apache.cassandra.exceptions.AlreadyExistsException;
-import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.serializers.SimpleDateSerializer;
 import org.apache.cassandra.serializers.TimeSerializer;
-import org.apache.cassandra.service.EmbeddedCassandraService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
-//FIXME: Need a test for builder that died
 public class MaterializedViewTest extends CQLTester
 {
     int protocolVersion = 3;
@@ -133,7 +125,6 @@ public class MaterializedViewTest extends CQLTester
         }
         catch (InvalidQueryException e)
         {
-
         }
     }
 
@@ -253,7 +244,6 @@ public class MaterializedViewTest extends CQLTester
             }
             catch (Exception e)
             {
-
             }
 
             try
@@ -263,7 +253,6 @@ public class MaterializedViewTest extends CQLTester
             }
             catch (InvalidQueryException e)
             {
-
             }
 
         }
@@ -274,8 +263,8 @@ public class MaterializedViewTest extends CQLTester
         assertRows(execute("SELECT bigintval FROM %s WHERE k = ? and asciival = ?", 0, "ascii text"), row(123123123123L));
 
         //Check the MV
-        assertRows(execute("SELECT k, bigintval from mv1_asciival WHERE asciival = ?", "ascii text"), row(0,123123123123L));
-        assertRows(execute("SELECT k, bigintval from mv2_k WHERE asciival = ? and k = ?", "ascii text",0), row(0,123123123123L));
+        assertRows(execute("SELECT k, bigintval from mv1_asciival WHERE asciival = ?", "ascii text"), row(0, 123123123123L));
+        assertRows(execute("SELECT k, bigintval from mv2_k WHERE asciival = ? and k = ?", "ascii text", 0), row(0, 123123123123L));
 
         assertRows(execute("SELECT k from mv1_bigintval WHERE bigintval = ?", 123123123123L), row(0));
         assertRows(execute("SELECT asciival from mv3_bigintval where bigintval = ? AND k = ?", 123123123123L, 0), row("ascii text"));
@@ -286,8 +275,8 @@ public class MaterializedViewTest extends CQLTester
         assertRows(execute("SELECT bigintval FROM %s WHERE k = ? and asciival = ?", 0, "ascii text"), row(1L));
 
         //Check the MV
-        assertRows(execute("SELECT k, bigintval from mv1_asciival WHERE asciival = ?", "ascii text"), row(0,1L));
-        assertRows(execute("SELECT k, bigintval from mv2_k WHERE asciival = ? and k = ?", "ascii text",0), row(0,1L));
+        assertRows(execute("SELECT k, bigintval from mv1_asciival WHERE asciival = ?", "ascii text"), row(0, 1L));
+        assertRows(execute("SELECT k, bigintval from mv2_k WHERE asciival = ? and k = ?", "ascii text", 0), row(0, 1L));
 
         assertRows(execute("SELECT k from mv1_bigintval WHERE bigintval = ?", 123123123123L));
         assertRows(execute("SELECT asciival from mv3_bigintval where bigintval = ? AND k = ?", 123123123123L, 0));
@@ -299,7 +288,7 @@ public class MaterializedViewTest extends CQLTester
 
         assertRows(execute("SELECT bigintval FROM %s WHERE k = ? and asciival = ?", 0, "ascii text"));
         assertRows(execute("SELECT k, bigintval from mv1_asciival WHERE asciival = ?", "ascii text"));
-        assertRows(execute("SELECT k, bigintval from mv2_k WHERE asciival = ? and k = ?", "ascii text",0));
+        assertRows(execute("SELECT k, bigintval from mv2_k WHERE asciival = ? and k = ?", "ascii text", 0));
         assertRows(execute("SELECT asciival from mv3_bigintval where bigintval = ? AND k = ?", 1L, 0));
 
         for (ColumnDefinition def : new HashSet<>(metadata.allColumns()))
@@ -832,5 +821,33 @@ public class MaterializedViewTest extends CQLTester
 
         Assert.assertNull(Schema.instance.getCFMetaData(keyspace(), currentTable()));
         Assert.assertNull(Schema.instance.getCFMetaData(keyspace(), "mv_udtval"));
+    }
+
+
+    @Test
+    public void ttlTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "a int," +
+                    "b int," +
+                    "c int," +
+                    "d int," +
+                    "PRIMARY KEY (a, b))");
+
+        dropTable("DROP MATERIALIZED VIEW IF EXISTS " + keyspace() + ".mv");
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv AS SELECT * FROM %s PRIMARY KEY (c)");
+
+
+        executeNet(protocolVersion, "INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?) USING TTL 5", 1, 1, 1, 1);
+
+        Thread.sleep(TimeUnit.SECONDS.toMillis(3));
+        executeNet(protocolVersion, "INSERT INTO %s (a, b, c) VALUES (?, ?, ?)", 1, 1, 2);
+
+        Thread.sleep(TimeUnit.SECONDS.toMillis(3));
+        List<Row> results = executeNet(protocolVersion, "SELECT d FROM " + keyspace() + ".mv WHERE c = 2 AND a = 1 AND b = 1").all();
+        assert results.size() == 1;
+        assert results.get(0).isNull(0);
+
+        dropTable("DROP MATERIALIZED VIEW " + keyspace() + ".mv");
     }
 }

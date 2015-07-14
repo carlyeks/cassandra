@@ -22,7 +22,6 @@ import java.nio.ByteBuffer;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.db.marshal.CollectionType;
 import org.apache.cassandra.db.marshal.SetType;
 import org.apache.cassandra.db.rows.*;
 import org.apache.cassandra.db.context.CounterContext;
@@ -223,7 +222,7 @@ public class RowUpdateBuilder
 
     public RowUpdateBuilder resetCollection(ColumnDefinition columnDefinition)
     {
-        assert columnDefinition.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + columnDefinition + " since no clustering hasn't been provided";
+        assert columnDefinition.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + columnDefinition + " since clustering has not yet been provided";
         assert columnDefinition.type.isCollection() && columnDefinition.type.isMultiCell();
         writer(columnDefinition).writeComplexDeletion(columnDefinition, new SimpleDeletionTime(defaultLiveness.timestamp() - 1, deletionTime.localDeletionTime()));
         return this;
@@ -258,7 +257,7 @@ public class RowUpdateBuilder
 
     public RowUpdateBuilder add(ColumnDefinition columnDefinition, Object value, LivenessInfo livenessInfo)
     {
-        assert columnDefinition.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + columnDefinition + " since no clustering hasn't been provided";
+        assert columnDefinition.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + columnDefinition + " since clustering has not yet been provided";
         if (value == null)
             writer(columnDefinition).writeCell(columnDefinition, false, ByteBufferUtil.EMPTY_BYTE_BUFFER, deletionLiveness, null);
         else
@@ -300,7 +299,7 @@ public class RowUpdateBuilder
     public RowUpdateBuilder addMapEntry(String columnName, Object key, Object value)
     {
         ColumnDefinition c = getDefinition(columnName);
-        assert c.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + c + " since no clustering hasn't been provided";
+        assert c.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + c + " since clustering has not yet been provided";
         assert c.type instanceof MapType;
         MapType mt = (MapType)c.type;
         writer(c).writeCell(c, false, bb(value, mt.getValuesType()), defaultLiveness, CellPath.create(bb(key, mt.getKeysType())));
@@ -310,7 +309,7 @@ public class RowUpdateBuilder
     public RowUpdateBuilder addListEntry(String columnName, Object value)
     {
         ColumnDefinition c = getDefinition(columnName);
-        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since no clustering hasn't been provided";
+        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since clustering has not yet been provided";
         assert c.type instanceof ListType;
         ListType lt = (ListType)c.type;
         writer(c).writeCell(c, false, bb(value, lt.getElementsType()), defaultLiveness, CellPath.create(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())));
@@ -320,7 +319,7 @@ public class RowUpdateBuilder
     public RowUpdateBuilder addSetEntry(String columnName, Object value)
     {
         ColumnDefinition c = getDefinition(columnName);
-        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since no clustering hasn't been provided";
+        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since clustering has not yet been provided";
         assert c.type instanceof SetType;
         SetType st = (SetType)c.type;
         writer(c).writeCell(c, false, null, defaultLiveness, CellPath.create(bb(value, st.getElementsType())));

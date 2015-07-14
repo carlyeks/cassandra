@@ -390,7 +390,7 @@ public class Keyspace
             throw new RuntimeException("Testing write failures");
 
         Lock lock = null;
-        if (updateIndexes && MaterializedViewManager.touchesSelectedColumn(Collections.singleton(mutation)))
+        if (updateIndexes && MaterializedViewManager.updatesAffectView(Collections.singleton(mutation)))
         {
             lock = MaterializedViewManager.acquireLockFor(mutation.key().getKey());
 
@@ -440,10 +440,9 @@ public class Keyspace
                     continue;
                 }
 
-
                 try
                 {
-                    if (updateIndexes && cfs.materializedViewManager.updateModifiesView(upd))
+                    if (updateIndexes && cfs.materializedViewManager.updateAffectsView(upd))
                     {
                         Tracing.trace("Create materialized view mutations from replica");
                         cfs.materializedViewManager.pushReplicaUpdates(partitionKey.getKey(), upd);
@@ -453,7 +452,6 @@ public class Keyspace
                 {
                     if ( !(e instanceof WriteTimeoutException))
                         logger.warn("Encountered exception when creating materialized view mutations", e);
-
 
                     JVMStabilityInspector.inspectThrowable(e);
                 }

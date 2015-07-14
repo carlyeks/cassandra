@@ -715,14 +715,14 @@ public class StorageProxy implements StorageProxyMBean
     throws WriteTimeoutException, WriteFailureException, UnavailableException, OverloadedException, InvalidRequestException
     {
         Collection<Mutation> augmented = TriggerExecutor.instance.execute(mutations);
-        boolean touchedMaterializedView = MaterializedViewManager.touchesSelectedColumn(mutations);
+        boolean updatesView = MaterializedViewManager.updatesAffectView(mutations);
 
         if (augmented != null)
-            mutateAtomically(augmented, consistencyLevel, touchedMaterializedView);
+            mutateAtomically(augmented, consistencyLevel, updatesView);
         else
         {
-            if (mutateAtomically || touchedMaterializedView)
-                mutateAtomically((Collection<Mutation>) mutations, consistencyLevel, touchedMaterializedView);
+            if (mutateAtomically || updatesView)
+                mutateAtomically((Collection<Mutation>) mutations, consistencyLevel, updatesView);
             else
                 mutate(mutations, consistencyLevel);
         }
@@ -789,7 +789,6 @@ public class StorageProxy implements StorageProxyMBean
 
             // write to the batchlog
             syncWriteToBatchlog(mutations, batchlogEndpoints, batchUUID);
-
 
             // now actually perform the writes and wait for them to complete
             syncWriteBatchedMutations(wrappers, localDataCenter, Stage.MUTATION);

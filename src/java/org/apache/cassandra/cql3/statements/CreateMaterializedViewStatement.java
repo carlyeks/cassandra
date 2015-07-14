@@ -19,20 +19,16 @@
 package org.apache.cassandra.cql3.statements;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import com.google.common.collect.Iterables;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.MaterializedViewDefinition;
-import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.cql3.CFName;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.selection.RawSelector;
@@ -154,45 +150,17 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 
         List<ColumnIdentifier> targetClusteringColumns = new ArrayList<>();
         List<ColumnIdentifier> targetPartitionKeys = new ArrayList<>();
-        ColumnIdentifier nonPkTarget = null;
+
+        // This is only used as an intermediate state; this is to catch whether multiple non-PK columns are used
+        boolean hasNonPKColumn = false;
         for (ColumnIdentifier.Raw raw : partitionKeys)
         {
-            ColumnIdentifier identifier = raw.prepare(cfm);
-
-            boolean isPk = basePrimaryKeyCols.contains(identifier);
-            if (!isPk)
-            {
-                if (nonPkTarget == null)
-                {
-                    nonPkTarget = identifier;
-                }
-                else
-                {
-                    throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view partition key", identifier));
-                }
-            }
-
-            targetPartitionKeys.add(identifier);
+            hasNonPKColumn = getColumnIdentifier(cfm, basePrimaryKeyCols, hasNonPKColumn, raw, targetPartitionKeys);
         }
 
         for (ColumnIdentifier.Raw raw : clusteringKeys)
         {
-            ColumnIdentifier identifier = raw.prepare(cfm);
-
-            boolean isPk = basePrimaryKeyCols.contains(identifier);
-            if (!isPk)
-            {
-                if (nonPkTarget == null)
-                {
-                    nonPkTarget = identifier;
-                }
-                else
-                {
-                    throw new InvalidRequestException(String.format("Cannot include non-primary key column '%s' in materialized view clustering columns", identifier));
-                }
-            }
-
-            targetClusteringColumns.add(identifier);
+            hasNonPKColumn = getColumnIdentifier(cfm, basePrimaryKeyCols, hasNonPKColumn, raw, targetClusteringColumns);
         }
 
         // We need to include all of the primary key colums from the base table in order to make sure that we do not
@@ -236,6 +204,24 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         MigrationManager.announceColumnFamilyUpdate(newCfm, false, isLocalOnly);
 
         return true;
+    }
+
+    private static boolean getColumnIdentifier(CFMetaData cfm,
+                                               Set<ColumnIdentifier> basePK,
+                                               boolean hasNonPKColumn,
+                                               ColumnIdentifier.Raw raw,
+                                               List<ColumnIdentifier> columns)
+    {
+        ColumnIdentifier identifier = raw.prepare(cfm);
+
+        boolean isPk = basePK.contains(identifier);
+        if (!isPk && hasNonPKColumn)
+        {
+            throw new InvalidRequestException(String.format("Cannot include more than one non-primary key column '%s' in materialized view partition key", identifier));
+        }
+
+        columns.add(identifier);
+        return !isPk;
     }
 
     public Event.SchemaChange changeEvent()

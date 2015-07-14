@@ -56,12 +56,9 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
- * A Materialized View copies data from a "base" table into a view table which can be queried independently from the
- * base. Every mutation which targets the base table must be fed through the {@link MaterializedViewManager} to ensure
- * that if a view needs to be updated, the mutations are properly created.
- *
- * When a view is defined, a {@link MaterializedViewDefinition} is created and associated with a table. The
- * {@link ColumnFamilyStore}
+ * A Materialized View copies data from a base table into a view table which can be queried independently from the
+ * base. Every update which targets the base table must be fed through the {@link MaterializedViewManager} to ensure
+ * that if a view needs to be updated, the updates are properly created and fed into the view.
  */
 public class MaterializedView
 {
@@ -153,7 +150,7 @@ public class MaterializedView
      *
      * @return true if {@param upd} modifies a column included in the view
      */
-    public boolean updateModifiesView(AbstractPartitionData upd)
+    public boolean updateAffectsView(AbstractPartitionData upd)
     {
         // If we are including all of the columns, then any update will be included
         if (includeAll)
@@ -450,7 +447,7 @@ public class MaterializedView
 
     public Collection<Mutation> createMutations(ByteBuffer key, AbstractPartitionData upd, boolean isBuilding)
     {
-        if (!updateModifiesView(upd))
+        if (!updateAffectsView(upd))
         {
             return null;
         }
