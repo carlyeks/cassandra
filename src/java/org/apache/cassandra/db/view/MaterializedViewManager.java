@@ -150,9 +150,9 @@ public class MaterializedViewManager
         if (!StorageService.instance.isJoined()) return;
 
         List<Mutation> mutations = null;
-        for (MaterializedView view : allViews())
+        for (Map.Entry<String, MaterializedView> view : viewsByName.entrySet())
         {
-            Collection<Mutation> viewMutations = view.createMutations(key, cf, false);
+            Collection<Mutation> viewMutations = view.getValue().createMutations(key, cf, false);
             if (viewMutations != null && !viewMutations.isEmpty())
             {
                 if (mutations == null)
@@ -186,12 +186,15 @@ public class MaterializedViewManager
         return null;
     }
 
-    public static boolean updatesAffectView(Collection<? extends IMutation> mutations)
+    public static boolean updatesAffectView(Collection<? extends IMutation> mutations, boolean ignoreRf1)
     {
         for (IMutation mutation : mutations)
         {
             for (PartitionUpdate cf : mutation.getPartitionUpdates())
             {
+                if (ignoreRf1 && Keyspace.open(cf.metadata().ksName).getReplicationStrategy().getReplicationFactor() == 1)
+                    continue;
+
                 MaterializedViewManager viewManager = Keyspace.open(cf.metadata().ksName)
                                                               .getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
                 if (viewManager.updateAffectsView(cf))

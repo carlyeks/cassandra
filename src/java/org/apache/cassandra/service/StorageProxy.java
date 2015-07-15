@@ -649,16 +649,11 @@ public class StorageProxy implements StorageProxyMBean
 
             ConsistencyLevel consistencyLevel = ConsistencyLevel.ONE;
 
-            final Collection<InetAddress> batchlogEndpoints = getBatchlogEndpoints(localDataCenter, consistencyLevel);
+            //Since the base -> view replication is 1:1 we only need to store the BL locally
+            final Collection<InetAddress> batchlogEndpoints = Collections.singleton(FBUtilities.getBroadcastAddress());
             final UUID batchUUID = UUIDGen.getTimeUUID();
             BatchlogResponseHandler.BatchlogCleanup cleanup = new BatchlogResponseHandler.BatchlogCleanup(mutations.size(),
-                                                                                                          new BatchlogResponseHandler.BatchlogCleanupCallback()
-                                                                                                          {
-                                                                                                              public void invoke()
-                                                                                                              {
-                                                                                                                  asyncRemoveFromBatchlog(batchlogEndpoints, batchUUID);
-                                                                                                              }
-                                                                                                          });
+                                                                                                          () -> asyncRemoveFromBatchlog(batchlogEndpoints, batchUUID));
 
             // add a handler for each mutation - includes checking availability, but doesn't initiate any writes, yet
             for (Mutation mutation : mutations)
@@ -676,10 +671,11 @@ public class StorageProxy implements StorageProxyMBean
                 // exit early if we can't fulfill the CL at this time.
                 wrapper.handler.assureSufficientLiveNodes();
                 wrappers.add(wrapper);
-            }
 
-            // write to the batchlog
-            syncWriteToBatchlog(mutations, batchlogEndpoints, batchUUID);
+
+                //Apply to local batchlog memtable in this thread
+                BatchlogManager.getBatchlogMutationFor(mutations, batchUUID, MessagingService.current_version).apply();
+            }
 
             // now actually perform the writes and wait for them to complete
             syncWriteBatchedMutations(wrappers, localDataCenter, Stage.MATERIALIZED_VIEW_MUTATION);
@@ -715,7 +711,7 @@ public class StorageProxy implements StorageProxyMBean
     throws WriteTimeoutException, WriteFailureException, UnavailableException, OverloadedException, InvalidRequestException
     {
         Collection<Mutation> augmented = TriggerExecutor.instance.execute(mutations);
-        boolean updatesView = MaterializedViewManager.updatesAffectView(mutations);
+        boolean updatesView = MaterializedViewManager.updatesAffectView(mutations, true);
 
         if (augmented != null)
             mutateAtomically(augmented, consistencyLevel, updatesView);
@@ -848,7 +844,6 @@ public class StorageProxy implements StorageProxyMBean
             }
             else
             {
-                logger.error("HERE");
                 MessagingService.instance().sendRR(BatchlogManager.getBatchlogMutationFor(mutations, uuid, targetVersion)
                                                                   .createMessage(MessagingService.Verb.BATCHLOG_MUTATION),
                                                    target,
@@ -889,8 +884,11 @@ public class StorageProxy implements StorageProxyMBean
             sendToHintedEndpoints(wrapper.mutation, endpoints, wrapper.handler, localDataCenter, stage);
         }
 
-        for (WriteResponseHandlerWrapper wrapper : wrappers)
-            wrapper.handler.get();
+        if (stage != Stage.MATERIALIZED_VIEW_MUTATION)
+        {
+            for (WriteResponseHandlerWrapper wrapper : wrappers)
+                wrapper.handler.get();
+        }
     }
 
     /**
