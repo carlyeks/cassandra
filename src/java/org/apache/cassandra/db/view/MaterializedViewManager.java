@@ -19,6 +19,7 @@
 package org.apache.cassandra.db.view;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -37,6 +38,7 @@ import org.apache.cassandra.db.IMutation;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.exceptions.UnavailableException;
@@ -73,6 +75,14 @@ public class MaterializedViewManager
         return viewsByName.values();
     }
 
+    public Iterable<ColumnFamilyStore> allViewsCfs()
+    {
+        List<ColumnFamilyStore> viewColumnFamilies = new ArrayList<>();
+        for (MaterializedView view : allViews())
+            viewColumnFamilies.add(view.viewCfs);
+        return viewColumnFamilies;
+    }
+
     public void init()
     {
         reload();
@@ -80,19 +90,19 @@ public class MaterializedViewManager
 
     public void invalidate()
     {
-        for (MaterializedView view: allViews())
+        for (MaterializedView view : allViews())
             removeMaterializedView(view.name);
     }
 
     public void reload()
     {
         Map<String, MaterializedViewDefinition> newViewsByName = new HashMap<>();
-        for (MaterializedViewDefinition definition: baseCfs.metadata.getMaterializedViews().values())
+        for (MaterializedViewDefinition definition : baseCfs.metadata.getMaterializedViews().values())
         {
             newViewsByName.put(definition.viewName, definition);
         }
 
-        for (String viewName: viewsByName.keySet())
+        for (String viewName : viewsByName.keySet())
         {
             if (!newViewsByName.containsKey(viewName))
                 removeMaterializedView(viewName);
@@ -137,6 +147,7 @@ public class MaterializedViewManager
 
     /**
      * Calculates and pushes updates to the views replicas. The replicas
+     *
      * @param key
      * @param cf
      * @throws UnavailableException
@@ -203,5 +214,27 @@ public class MaterializedViewManager
         }
 
         return false;
+    }
+
+
+    public void forceBlockingFlush()
+    {
+        for (ColumnFamilyStore viewCfs : allViewsCfs())
+            viewCfs.forceBlockingFlush();
+    }
+
+    public void dumpMemtables()
+    {
+        for (ColumnFamilyStore viewCfs : allViewsCfs())
+            viewCfs.dumpMemtable();
+    }
+
+    public void truncateBlocking(long truncatedAt)
+    {
+        for (ColumnFamilyStore viewCfs : allViewsCfs())
+        {
+            ReplayPosition replayAfter = viewCfs.discardSSTables(truncatedAt);
+            SystemKeyspace.saveTruncationRecord(viewCfs, truncatedAt, replayAfter);
+        }
     }
 }

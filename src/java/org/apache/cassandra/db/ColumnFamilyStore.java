@@ -1970,7 +1970,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                     cfs.data.reset();
                     return null;
                 }
-            }, true);
+            }, true, false);
         }
     }
 
@@ -1998,19 +1998,16 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             // flush the CF being truncated before forcing the new segment
             forceBlockingFlush();
 
+            materializedViewManager.forceBlockingFlush();
+
             // sleep a little to make sure that our truncatedAt comes after any sstable
             // that was part of the flushed we forced; otherwise on a tie, it won't get deleted.
             Uninterruptibles.sleepUninterruptibly(1, TimeUnit.MILLISECONDS);
         }
         else
         {
-            // just nuke the memtable data w/o writing to disk first
-            synchronized (data)
-            {
-                final Flush flush = new Flush(true);
-                flushExecutor.execute(flush);
-                postFlushExecutor.submit(flush.postFlush);
-            }
+            dumpMemtable();
+            materializedViewManager.dumpMemtables();
         }
 
         Runnable truncateRunnable = new Runnable()
@@ -2030,17 +2027,30 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 for (SecondaryIndex index : indexManager.getIndexes())
                     index.truncateBlocking(truncatedAt);
 
+                materializedViewManager.truncateBlocking(truncatedAt);
+
                 SystemKeyspace.saveTruncationRecord(ColumnFamilyStore.this, truncatedAt, replayAfter);
                 logger.debug("cleaning out row cache");
                 invalidateCaches();
             }
         };
 
-        runWithCompactionsDisabled(Executors.callable(truncateRunnable), true);
+        runWithCompactionsDisabled(Executors.callable(truncateRunnable), true, true);
         logger.debug("truncate complete");
     }
 
-    public <V> V runWithCompactionsDisabled(Callable<V> callable, boolean interruptValidation)
+    public void dumpMemtable()
+    {
+        // just nuke the memtable data w/o writing to disk first
+        synchronized (data)
+        {
+            final Flush flush = new Flush(true);
+            flushExecutor.execute(flush);
+            postFlushExecutor.submit(flush.postFlush);
+        }
+    }
+
+    public <V> V runWithCompactionsDisabled(Callable<V> callable, boolean interruptValidation, boolean interruptViews)
     {
         // synchronize so that concurrent invocations don't re-enable compactions partway through unexpectedly,
         // and so we only run one major compaction at a time
@@ -2048,17 +2058,20 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         {
             logger.debug("Cancelling in-progress compactions for {}", metadata.cfName);
 
-            Iterable<ColumnFamilyStore> selfWithIndexes = concatWithIndexes();
-            for (ColumnFamilyStore cfs : selfWithIndexes)
+            Iterable<ColumnFamilyStore> selfWithAuxiliaryCfs = interruptViews
+                                                               ? Iterables.concat(concatWithIndexes(), materializedViewManager.allViewsCfs())
+                                                               : concatWithIndexes();
+
+            for (ColumnFamilyStore cfs : selfWithAuxiliaryCfs)
                 cfs.getCompactionStrategyManager().pause();
             try
             {
                 // interrupt in-progress compactions
-                CompactionManager.instance.interruptCompactionForCFs(selfWithIndexes, interruptValidation);
-                CompactionManager.instance.waitForCessation(selfWithIndexes);
+                CompactionManager.instance.interruptCompactionForCFs(selfWithAuxiliaryCfs, interruptValidation);
+                CompactionManager.instance.waitForCessation(selfWithAuxiliaryCfs);
 
                 // doublecheck that we finished, instead of timing out
-                for (ColumnFamilyStore cfs : selfWithIndexes)
+                for (ColumnFamilyStore cfs : selfWithAuxiliaryCfs)
                 {
                     if (!cfs.getTracker().getCompacting().isEmpty())
                     {
@@ -2080,7 +2093,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             }
             finally
             {
-                for (ColumnFamilyStore cfs : selfWithIndexes)
+                for (ColumnFamilyStore cfs : selfWithAuxiliaryCfs)
                     cfs.getCompactionStrategyManager().resume();
             }
         }
@@ -2100,7 +2113,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             }
         };
 
-        return runWithCompactionsDisabled(callable, false);
+        return runWithCompactionsDisabled(callable, false, false);
     }
 
 
