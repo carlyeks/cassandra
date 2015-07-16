@@ -22,6 +22,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,9 @@ public class Schema
     private static final Logger logger = LoggerFactory.getLogger(Schema.class);
 
     public static final Schema instance = new Schema();
+
+    /* system keyspace names (the ones with LocalStrategy replication strategy) */
+    public static final Set<String> SYSTEM_KEYSPACE_NAMES = ImmutableSet.of(SystemKeyspace.NAME, SchemaKeyspace.NAME);
 
     /**
      * longest permissible KS or CF name.  Our main concern is that filename not be more than 255 characters;
@@ -90,7 +94,16 @@ public class Schema
      */
     public Schema()
     {
+        load(SchemaKeyspace.metadata());
         load(SystemKeyspace.metadata());
+    }
+
+    /**
+     * @return whether or not the keyspace is a really system one (w/ LocalStrategy, unmodifiable, hardcoded)
+     */
+    public static boolean isSystemKeyspace(String keyspaceName)
+    {
+        return SYSTEM_KEYSPACE_NAMES.contains(keyspaceName.toLowerCase());
     }
 
     /**
@@ -109,7 +122,7 @@ public class Schema
      */
     public Schema loadFromDisk(boolean updateVersion)
     {
-        load(LegacySchemaTables.readSchemaFromSystemTables());
+        load(SchemaKeyspace.readSchemaFromSystemTables());
         if (updateVersion)
             updateVersion();
         return this;
@@ -255,7 +268,7 @@ public class Schema
      */
     public List<String> getNonSystemKeyspaces()
     {
-        return ImmutableList.copyOf(Sets.difference(keyspaces.keySet(), Collections.singleton(SystemKeyspace.NAME)));
+        return ImmutableList.copyOf(Sets.difference(keyspaces.keySet(), SYSTEM_KEYSPACE_NAMES));
     }
 
     /**
@@ -354,13 +367,12 @@ public class Schema
      *
      * @param cfm The ColumnFamily Definition to evict
      */
-    public void purge(CFMetaData cfm)
+    public void unload(CFMetaData cfm)
     {
         for (MaterializedViewDefinition definition : cfm.getMaterializedViews().values())
             materializedViewList.remove(Pair.create(cfm.ksName, definition.viewName));
 
         cfIdMap.remove(Pair.create(cfm.ksName, cfm.cfName));
-        cfm.markPurged();
     }
 
     /* Function helpers */
@@ -418,7 +430,7 @@ public class Schema
      */
     public void updateVersion()
     {
-        version = LegacySchemaTables.calculateSchemaDigest();
+        version = SchemaKeyspace.calculateSchemaDigest();
         SystemKeyspace.updateSchemaVersion(version);
     }
 
@@ -439,7 +451,7 @@ public class Schema
         for (String keyspaceName : getNonSystemKeyspaces())
         {
             KeyspaceMetadata ksm = getKSMetaData(keyspaceName);
-            ksm.tables.forEach(this::purge);
+            ksm.tables.forEach(this::unload);
             clearKeyspaceMetadata(ksm);
         }
 
@@ -476,7 +488,7 @@ public class Schema
         {
             ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(cfm.cfName);
 
-            purge(cfm);
+            unload(cfm);
 
             if (DatabaseDescriptor.isAutoSnapshot())
                 cfs.snapshot(snapshotName);
@@ -537,11 +549,14 @@ public class Schema
         ColumnFamilyStore cfs = Keyspace.open(ksName).getColumnFamilyStore(tableName);
         assert cfs != null;
 
+        // make sure all the indexes are dropped, or else.
+        cfs.indexManager.setIndexRemoved(new HashSet<>(cfs.indexManager.getBuiltIndexes()));
+
         // reinitialize the keyspace.
         CFMetaData cfm = oldKsm.tables.get(tableName).get();
         KeyspaceMetadata newKsm = oldKsm.withSwapped(oldKsm.tables.without(tableName));
 
-        purge(cfm);
+        unload(cfm);
         setKeyspaceMetadata(newKsm);
 
         CompactionManager.instance.interruptCompactionFor(Collections.singleton(cfm), true);

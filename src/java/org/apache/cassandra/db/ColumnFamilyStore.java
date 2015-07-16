@@ -248,20 +248,9 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         {
             public void run()
             {
-                List<ColumnFamilyStore> submitted = new ArrayList<>();
                 for (Keyspace keyspace : Keyspace.all())
                     for (ColumnFamilyStore cfs : keyspace.getColumnFamilyStores())
-                        if (!CompactionManager.instance.submitBackground(cfs, false).isEmpty())
-                            submitted.add(cfs);
-
-                while (!submitted.isEmpty() && CompactionManager.instance.getActiveCompactions() < CompactionManager.instance.getMaximumCompactorThreads())
-                {
-                    List<ColumnFamilyStore> submitMore = ImmutableList.copyOf(submitted);
-                    submitted.clear();
-                    for (ColumnFamilyStore cfs : submitMore)
-                        if (!CompactionManager.instance.submitBackground(cfs, false).isEmpty())
-                            submitted.add(cfs);
-                }
+                        CompactionManager.instance.submitBackground(cfs);
             }
         };
     }
@@ -286,14 +275,15 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     public Map<String,String> getCompressionParameters()
     {
-        return metadata.compressionParameters().asThriftOptions();
+        return metadata.compressionParameters().asMap();
     }
 
     public void setCompressionParameters(Map<String,String> opts)
     {
         try
         {
-            metadata.compressionParameters = CompressionParameters.create(opts);
+            metadata.compressionParameters = CompressionParameters.fromMap(opts);
+            metadata.compressionParameters.validate();
         }
         catch (ConfigurationException e)
         {

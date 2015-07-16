@@ -1340,7 +1340,7 @@ public class StorageProxy implements StorageProxyMBean
     private static boolean systemKeyspaceQuery(List<? extends ReadCommand> cmds)
     {
         for (ReadCommand cmd : cmds)
-            if (!cmd.metadata().ksName.equals(SystemKeyspace.NAME))
+            if (!Schema.isSystemKeyspace(cmd.metadata().ksName))
                 return false;
         return true;
     }

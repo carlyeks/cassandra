@@ -51,6 +51,11 @@ public final class Functions implements Iterable<Function>
         return builder().build();
     }
 
+    public static Functions of(Function... funs)
+    {
+        return builder().add(funs).build();
+    }
+
     public Iterator<Function> iterator()
     {
         return functions.values().iterator();
@@ -141,6 +146,19 @@ public final class Functions implements Iterable<Function>
         return true;
     }
 
+    public static int typeHashCode(AbstractType<?> t)
+    {
+        return t.asCQL3Type().toString().hashCode();
+    }
+
+    public static int typeHashCode(List<AbstractType<?>> types)
+    {
+        int h = 0;
+        for (AbstractType<?> type : types)
+            h = h * 31 + typeHashCode(type);
+        return h;
+    }
+
     /**
      * Create a Functions instance with the provided function added
      */
@@ -187,6 +205,8 @@ public final class Functions implements Iterable<Function>
 
         private Builder()
         {
+            // we need deterministic iteration order; otherwise Functions.equals() breaks down
+            functions.orderValuesBy((f1, f2) -> Integer.compare(f1.hashCode(), f2.hashCode()));
         }
 
         public Functions build()

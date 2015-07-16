@@ -53,7 +53,7 @@ import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputBufferFixed;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.net.AsyncOneResponse;
-import org.apache.thrift.*;
+
 import org.codehaus.jackson.JsonFactory;
 import org.codehaus.jackson.map.ObjectMapper;
 
@@ -246,45 +246,6 @@ public class FBUtilities
     public static BigInteger hashToBigInteger(ByteBuffer data)
     {
         return new BigInteger(hash(data)).abs();
-    }
-
-    @Deprecated
-    public static void serialize(TSerializer serializer, TBase struct, DataOutput out)
-    throws IOException
-    {
-        assert serializer != null;
-        assert struct != null;
-        assert out != null;
-        byte[] bytes;
-        try
-        {
-            bytes = serializer.serialize(struct);
-        }
-        catch (TException e)
-        {
-            throw new RuntimeException(e);
-        }
-        out.writeInt(bytes.length);
-        out.write(bytes);
-    }
-
-    @Deprecated
-    public static void deserialize(TDeserializer deserializer, TBase struct, DataInput in)
-    throws IOException
-    {
-        assert deserializer != null;
-        assert struct != null;
-        assert in != null;
-        byte[] bytes = new byte[in.readInt()];
-        in.readFully(bytes);
-        try
-        {
-            deserializer.deserialize(struct, bytes);
-        }
-        catch (TException ex)
-        {
-            throw new IOException(ex);
-        }
     }
 
     public static void sortSampledKeys(List<DecoratedKey> keys, Range<Token> range)
@@ -638,20 +599,6 @@ public class FBUtilities
         checksum.update((v >>> 0) & 0xFF);
     }
 
-    private static Method directUpdate;
-    static
-    {
-        try
-        {
-            directUpdate = Adler32.class.getDeclaredMethod("update", new Class[]{ByteBuffer.class});
-            directUpdate.setAccessible(true);
-        } catch (NoSuchMethodException e)
-        {
-            logger.warn("JVM doesn't support Adler32 byte buffer access");
-            directUpdate = null;
-        }
-    }
-
     private static final ThreadLocal<byte[]> threadLocalScratchBuffer = new ThreadLocal<byte[]>()
     {
         @Override
@@ -664,45 +611,6 @@ public class FBUtilities
     public static byte[] getThreadLocalScratchBuffer()
     {
         return threadLocalScratchBuffer.get();
-    }
-
-    //Java 7 has this method but it's private till Java 8. Thanks JDK!
-    public static boolean supportsDirectChecksum()
-    {
-        return directUpdate != null;
-    }
-
-    public static void directCheckSum(Adler32 checksum, ByteBuffer bb)
-    {
-        if (directUpdate != null)
-        {
-            try
-            {
-                directUpdate.invoke(checksum, bb);
-                return;
-            }
-            catch (IllegalAccessException e)
-            {
-                directUpdate = null;
-                logger.warn("JVM doesn't support Adler32 byte buffer access");
-            }
-            catch (InvocationTargetException e)
-            {
-                throw new RuntimeException(e);
-            }
-        }
-
-        //Fallback
-        byte[] buffer = getThreadLocalScratchBuffer();
-
-        int remaining;
-        while ((remaining = bb.remaining()) > 0)
-        {
-            remaining = Math.min(remaining, buffer.length);
-            ByteBufferUtil.arrayCopy(bb, bb.position(), buffer, 0, remaining);
-            bb.position(bb.position() + remaining);
-            checksum.update(buffer, 0, remaining);
-        }
     }
 
     public static long abs(long index)

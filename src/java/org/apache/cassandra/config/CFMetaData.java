@@ -34,7 +34,6 @@ import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.github.jamm.Unmetered;
 
 import org.apache.cassandra.cache.CachingOptions;
 import org.apache.cassandra.cql3.ColumnIdentifier;
@@ -49,11 +48,13 @@ import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.LZ4Compressor;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.schema.LegacySchemaTables;
+import org.apache.cassandra.schema.SchemaKeyspace;
+import org.apache.cassandra.schema.Triggers;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.UUIDGen;
 import org.apache.cassandra.utils.Pair;
+import org.github.jamm.Unmetered;
 
 /**
  * This class can be tricky to modify. Please read http://wiki.apache.org/cassandra/ConfigurationNotes for how to do so safely.
@@ -190,10 +191,10 @@ public final class CFMetaData
     private volatile int memtableFlushPeriod = 0;
     private volatile int defaultTimeToLive = DEFAULT_DEFAULT_TIME_TO_LIVE;
     private volatile SpeculativeRetry speculativeRetry = DEFAULT_SPECULATIVE_RETRY;
-    private volatile Map<ColumnIdentifier, DroppedColumn> droppedColumns = new HashMap();
-    private volatile Map<String, TriggerDefinition> triggers = new HashMap<>();
+    private volatile Map<ByteBuffer, DroppedColumn> droppedColumns = new HashMap<>();
+    private volatile Triggers triggers = Triggers.none();
     private volatile Map<String, MaterializedViewDefinition> materializedViews = new HashMap<>();
-    private volatile boolean isPurged = false;
+
     /*
      * All CQL3 columns definition are stored in the columnMetadata map.
      * On top of that, we keep separated collection of each kind of definition, to
@@ -201,7 +202,6 @@ public final class CFMetaData
      * clustering key ones, those list are ordered by the "component index" of the
      * elements.
      */
-
     private volatile Map<ByteBuffer, ColumnDefinition> columnMetadata = new HashMap<>();
     private volatile List<ColumnDefinition> partitionKeyColumns;  // Always of size keyValidator.componentsCount, null padded if necessary
     private volatile List<ColumnDefinition> clusteringColumns;    // Of size comparator.componentsCount or comparator.componentsCount -1, null padded if necessary
@@ -218,7 +218,7 @@ public final class CFMetaData
     public volatile Class<? extends AbstractCompactionStrategy> compactionStrategyClass = DEFAULT_COMPACTION_STRATEGY_CLASS;
     public volatile Map<String, String> compactionStrategyOptions = new HashMap<>();
 
-    public volatile CompressionParameters compressionParameters = new CompressionParameters(null);
+    public volatile CompressionParameters compressionParameters = CompressionParameters.noCompression();
 
     // attribute setters that return the modified CFMetaData instance
     public CFMetaData comment(String prop) {comment = Strings.nullToEmpty(prop); return this;}
@@ -237,8 +237,8 @@ public final class CFMetaData
     public CFMetaData memtableFlushPeriod(int prop) {memtableFlushPeriod = prop; return this;}
     public CFMetaData defaultTimeToLive(int prop) {defaultTimeToLive = prop; return this;}
     public CFMetaData speculativeRetry(SpeculativeRetry prop) {speculativeRetry = prop; return this;}
-    public CFMetaData droppedColumns(Map<ColumnIdentifier, DroppedColumn> cols) {droppedColumns = cols; return this;}
-    public CFMetaData triggers(Map<String, TriggerDefinition> prop) {triggers = prop; return this;}
+    public CFMetaData droppedColumns(Map<ByteBuffer, DroppedColumn> cols) {droppedColumns = cols; return this;}
+    public CFMetaData triggers(Triggers prop) {triggers = prop; return this;}
     public CFMetaData materializedViews(Map<String, MaterializedViewDefinition> prop) {materializedViews = prop; return this;}
 
     private CFMetaData(String keyspace,
@@ -359,7 +359,7 @@ public final class CFMetaData
         return CFMetaData.Builder.create(keyspace, name).addPartitionKey("key", BytesType.instance).build();
     }
 
-    public Map<String, TriggerDefinition> getTriggers()
+    public Triggers getTriggers()
     {
         return triggers;
     }
@@ -474,8 +474,8 @@ public final class CFMetaData
                       .speculativeRetry(oldCFMD.speculativeRetry)
                       .memtableFlushPeriod(oldCFMD.memtableFlushPeriod)
                       .droppedColumns(new HashMap<>(oldCFMD.droppedColumns))
-                      .materializedViews(new HashMap<>(oldCFMD.materializedViews))
-                      .triggers(new HashMap<>(oldCFMD.triggers));
+                      .triggers(oldCFMD.triggers)
+                      .materializedViews(new HashMap<>(oldCFMD.materializedViews));
     }
 
     /**
@@ -695,7 +695,7 @@ public final class CFMetaData
         return defaultTimeToLive;
     }
 
-    public Map<ColumnIdentifier, DroppedColumn> getDroppedColumns()
+    public Map<ByteBuffer, DroppedColumn> getDroppedColumns()
     {
         return droppedColumns;
     }
@@ -801,7 +801,7 @@ public final class CFMetaData
      */
     public boolean reload()
     {
-        return apply(LegacySchemaTables.createTableFromName(ksName, cfName));
+        return apply(SchemaKeyspace.createTableFromName(ksName, cfName));
     }
 
     /**
@@ -1128,16 +1128,6 @@ public final class CFMetaData
                                                            "interval (%d).", maxIndexInterval, minIndexInterval));
     }
 
-    public boolean isPurged()
-    {
-        return isPurged;
-    }
-
-    void markPurged()
-    {
-        isPurged = true;
-    }
-
     // The comparator to validate the definition name.
     public AbstractType<?> thriftColumnNameType()
     {
@@ -1209,24 +1199,6 @@ public final class CFMetaData
         return removed;
     }
 
-    public void addTriggerDefinition(TriggerDefinition def) throws InvalidRequestException
-    {
-        if (containsTriggerDefinition(def))
-            throw new InvalidRequestException(
-                String.format("Cannot create trigger %s, a trigger with the same name already exists", def.name));
-        triggers.put(def.name, def);
-    }
-
-    public boolean containsTriggerDefinition(TriggerDefinition def)
-    {
-        return triggers.containsKey(def.name);
-    }
-
-    public boolean removeTrigger(String name)
-    {
-        return triggers.remove(name) != null;
-    }
-
     public void addMaterializedView(MaterializedViewDefinition def)
     {
         if (materializedViews.containsKey(def.viewName))
@@ -1246,7 +1218,7 @@ public final class CFMetaData
 
     public void recordColumnDrop(ColumnDefinition def)
     {
-        droppedColumns.put(def.name, new DroppedColumn(def.type, FBUtilities.timestampMicros()));
+        droppedColumns.put(def.name.bytes, new DroppedColumn(def.type, FBUtilities.timestampMicros()));
     }
 
     public void renameColumn(ColumnIdentifier from, ColumnIdentifier to) throws InvalidRequestException
@@ -1393,7 +1365,7 @@ public final class CFMetaData
             .append("columnMetadata", columnMetadata.values())
             .append("compactionStrategyClass", compactionStrategyClass)
             .append("compactionStrategyOptions", compactionStrategyOptions)
-            .append("compressionParameters", compressionParameters.asThriftOptions())
+            .append("compressionParameters", compressionParameters.asMap())
             .append("bloomFilterFpChance", getBloomFilterFpChance())
             .append("memtableFlushPeriod", memtableFlushPeriod)
             .append("caching", caching)
@@ -1402,7 +1374,7 @@ public final class CFMetaData
             .append("maxIndexInterval", maxIndexInterval)
             .append("speculativeRetry", speculativeRetry)
             .append("droppedColumns", droppedColumns)
-            .append("triggers", triggers.values())
+            .append("triggers", triggers)
             .append("materializedViews", materializedViews.values())
             .toString();
     }
@@ -1581,29 +1553,16 @@ public final class CFMetaData
     // we could make UUIDSerializer work as the serializer below, but I'll keep that to later.
     public static class Serializer
     {
-        private static void writeLongAsSeparateBytes(long value, DataOutputPlus out) throws IOException
-        {
-            for (int i = 7; i >= 0; i--)
-                out.writeByte((int)((value >> (8 * i)) & 0xFF));
-        }
-
-        private static long readLongAsSeparateBytes(DataInput in) throws IOException
-        {
-            long val = 0;
-            for (int i = 7; i >= 0; i--)
-                val |= ((long)in.readUnsignedByte()) << (8 * i);
-            return val;
-        }
-
         public void serialize(CFMetaData metadata, DataOutputPlus out, int version) throws IOException
         {
-            writeLongAsSeparateBytes(metadata.cfId.getMostSignificantBits(), out);
-            writeLongAsSeparateBytes(metadata.cfId.getLeastSignificantBits(), out);
+            // for some reason these are stored is LITTLE_ENDIAN; so just reverse them
+            out.writeLong(Long.reverseBytes(metadata.cfId.getMostSignificantBits()));
+            out.writeLong(Long.reverseBytes(metadata.cfId.getLeastSignificantBits()));
         }
 
         public CFMetaData deserialize(DataInput in, int version) throws IOException
         {
-            UUID cfId = new UUID(readLongAsSeparateBytes(in), readLongAsSeparateBytes(in));
+            UUID cfId = new UUID(Long.reverseBytes(in.readLong()), Long.reverseBytes(in.readLong()));
             CFMetaData metadata = Schema.instance.getCFMetaData(cfId);
             if (metadata == null)
             {

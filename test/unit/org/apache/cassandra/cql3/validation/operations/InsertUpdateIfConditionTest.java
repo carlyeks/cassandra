@@ -23,12 +23,13 @@ import org.junit.Test;
 import org.apache.cassandra.cql3.CQLTester;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.SyntaxException;
+import org.apache.cassandra.schema.SchemaKeyspace;
 
+import static java.lang.String.format;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
-public class InsertUpdateIfCondition extends CQLTester
+public class InsertUpdateIfConditionTest extends CQLTester
 {
     /**
      * Migrated from cql_tests.py:TestCQL.cas_simple_test()
@@ -165,6 +166,13 @@ public class InsertUpdateIfCondition extends CQLTester
         assertRows(execute("SELECT * FROM %s WHERE k=3"), row(3, null));
         assertRows(execute("DELETE v1 FROM %s WHERE k=3 IF EXISTS"), row(true));
         assertRows(execute("DELETE FROM %s WHERE k=3 IF EXISTS"), row(true));
+
+        execute("INSERT INTO %s (k, v1) VALUES (4, 2)");
+        execute("UPDATE %s USING TTL 1 SET v1=2 WHERE k=4");
+        Thread.sleep(1001);
+        assertRows(execute("SELECT * FROM %s WHERE k=4"), row(4, null));
+        assertRows(execute("DELETE FROM %s WHERE k=4 IF EXISTS"), row(true));
+        assertEmpty(execute("SELECT * FROM %s WHERE k=4"));
 
         // static columns
         createTable("CREATE TABLE %s (k text, s text static, i int, v text, PRIMARY KEY (k, i) )");
@@ -762,17 +770,26 @@ public class InsertUpdateIfCondition extends CQLTester
 
         // create and confirm
         schemaChange("CREATE KEYSPACE IF NOT EXISTS " + keyspace + " WITH replication = { 'class':'SimpleStrategy', 'replication_factor':1} and durable_writes = true ");
-        assertRows(execute("select durable_writes from system.schema_keyspaces where keyspace_name = ?", keyspace), row(true));
+        assertRows(execute(format("select durable_writes from %s.%s where keyspace_name = ?",
+                                  SchemaKeyspace.NAME,
+                                  SchemaKeyspace.KEYSPACES),
+                           keyspace),
+                   row(true));
 
         // unsuccessful create since it's already there, confirm settings don't change
         schemaChange("CREATE KEYSPACE IF NOT EXISTS " + keyspace + " WITH replication = {'class':'SimpleStrategy', 'replication_factor':1} and durable_writes = false ");
 
-        assertRows(execute("select durable_writes from system.schema_keyspaces where keyspace_name = ?", keyspace), row(true));
+        assertRows(execute(format("select durable_writes from %s.%s where keyspace_name = ?",
+                                  SchemaKeyspace.NAME,
+                                  SchemaKeyspace.KEYSPACES),
+                           keyspace),
+                   row(true));
 
         // drop and confirm
         schemaChange("DROP KEYSPACE IF EXISTS " + keyspace);
 
-        assertEmpty(execute("select * from system.schema_keyspaces where keyspace_name = ?", keyspace));
+        assertEmpty(execute(format("select * from %s.%s where keyspace_name = ?", SchemaKeyspace.NAME, SchemaKeyspace.KEYSPACES),
+                            keyspace));
     }
 
 
@@ -791,19 +808,19 @@ public class InsertUpdateIfCondition extends CQLTester
         // create and confirm
         schemaChange("CREATE TABLE IF NOT EXISTS " + fullTableName + " (id text PRIMARY KEY, value1 blob) with comment = 'foo'");
 
-        assertRows(execute("select comment from system.schema_columnfamilies where keyspace_name = ? and columnfamily_name = ?", KEYSPACE, tableName),
+        assertRows(execute("select comment from system_schema.tables where keyspace_name = ? and table_name = ?", KEYSPACE, tableName),
                    row("foo"));
 
         // unsuccessful create since it's already there, confirm settings don't change
         schemaChange("CREATE TABLE IF NOT EXISTS " + fullTableName + " (id text PRIMARY KEY, value2 blob)with comment = 'bar'");
 
-        assertRows(execute("select comment from system.schema_columnfamilies where keyspace_name = ? and columnfamily_name = ?", KEYSPACE, tableName),
+        assertRows(execute("select comment from system_schema.tables where keyspace_name = ? and table_name = ?", KEYSPACE, tableName),
                    row("foo"));
 
         // drop and confirm
         schemaChange("DROP TABLE IF EXISTS " + fullTableName);
 
-        assertEmpty(execute("select * from system.schema_columnfamilies where keyspace_name = ? and columnfamily_name = ?", KEYSPACE, tableName));
+        assertEmpty(execute("select * from system_schema.tables where keyspace_name = ? and table_name = ?", KEYSPACE, tableName));
     }
 
     /**
@@ -847,7 +864,11 @@ public class InsertUpdateIfCondition extends CQLTester
 
         // create and confirm
         execute("CREATE TYPE IF NOT EXISTS mytype (somefield int)");
-        assertRows(execute("SELECT type_name from system.schema_usertypes where keyspace_name = ? and type_name = ?", KEYSPACE, "mytype"),
+        assertRows(execute(format("SELECT type_name from %s.%s where keyspace_name = ? and type_name = ?",
+                                  SchemaKeyspace.NAME,
+                                  SchemaKeyspace.TYPES),
+                           KEYSPACE,
+                           "mytype"),
                    row("mytype"));
 
         // unsuccessful create since it 's already there
@@ -856,6 +877,10 @@ public class InsertUpdateIfCondition extends CQLTester
 
         // drop and confirm
         execute("DROP TYPE IF EXISTS mytype");
-        assertEmpty(execute("SELECT type_name from system.schema_usertypes where keyspace_name = ? and type_name = ?", KEYSPACE, "mytype"));
+        assertEmpty(execute(format("SELECT type_name from %s.%s where keyspace_name = ? and type_name = ?",
+                                   SchemaKeyspace.NAME,
+                                   SchemaKeyspace.TYPES),
+                            KEYSPACE,
+                            "mytype"));
     }
 }
