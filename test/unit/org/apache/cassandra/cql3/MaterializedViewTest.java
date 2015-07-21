@@ -138,6 +138,48 @@ public class MaterializedViewTest extends CQLTester
 
         try
         {
+            executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (sval,k)");
+            Assert.fail("MV on static should fail");
+        }
+        catch (InvalidQueryException e)
+        {
+        }
+
+
+
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (val,k)");
+
+
+        for (int i = 0; i < 100; i++)
+            updateMV("INSERT into %s (k,c,sval,val)VALUES(?,?,?,?)", 0, i % 2, "bar" + i, "baz");
+
+
+        Assert.assertEquals(2, execute("select * from %s").size());
+
+        assertRows(execute("SELECT sval from %s"), row("bar99"), row("bar99"));
+
+
+        Assert.assertEquals(2, execute("select * from mv_static").size());
+
+        assertInvalid("SELECT sval from mv_static");
+    }
+
+
+    @Test
+    public void testStaticTable() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "c int, " +
+                    "sval text static, " +
+                    "val text, "+
+                    "PRIMARY KEY(k,c))");
+
+        execute("USE " + keyspace());
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        try
+        {
             executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (sval,k,c)");
             Assert.fail("MV on static should fail");
         }
