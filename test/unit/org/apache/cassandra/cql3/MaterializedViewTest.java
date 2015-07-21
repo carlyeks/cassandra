@@ -32,6 +32,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.datastax.driver.core.*;
+import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.exceptions.InvalidQueryException;
 import junit.framework.Assert;
 import org.apache.cassandra.concurrent.SEPExecutor;
@@ -47,7 +48,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 
 public class MaterializedViewTest extends CQLTester
 {
-    int protocolVersion = 3;
+    int protocolVersion = 4;
 
     @BeforeClass
     public static void startup()
@@ -119,6 +120,48 @@ public class MaterializedViewTest extends CQLTester
         metadata = Schema.instance.getCFMetaData(keyspace(), "mv1_test");
         Assert.assertNotNull(metadata.getColumnDefinition(ByteBufferUtil.bytes("bar")));
         executeNet(protocolVersion, "DROP MATERIALIZED VIEW mv1_test");
+    }
+
+
+    @Test
+    public void testStaticTable() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "c int, " +
+                    "sval text static, " +
+                    "val text, "+
+                    "PRIMARY KEY(k,c))");
+
+        execute("USE " + keyspace());
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        try
+        {
+            executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (sval,k)");
+            Assert.fail("MV on static should fail");
+        }
+        catch (InvalidQueryException e)
+        {
+        }
+
+
+
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (val,k)");
+
+
+        for (int i = 0; i < 100; i++)
+            updateMV("INSERT into %s (k,c,sval,val)VALUES(?,?,?,?)", 0, i % 2, "bar" + i, "baz");
+
+
+        Assert.assertEquals(2, execute("select * from %s").size());
+
+        assertRows(execute("SELECT sval from %s"), row("bar99"), row("bar99"));
+
+
+        Assert.assertEquals(2, execute("select * from mv_static").size());
+
+        assertInvalid("SELECT sval from mv_static");
     }
 
     @Test

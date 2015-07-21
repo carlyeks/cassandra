@@ -586,14 +586,6 @@ public class MaterializedView
             }
         }
 
-        for (ColumnDefinition column : baseCf.partitionColumns().statics.columns)
-        {
-            if (column != nonPkTarget && (includeAll || included.contains(column)))
-            {
-                viewBuilder.addStaticColumn(column.name, column.type);
-            }
-        }
-
         //Add any extra clustering columns
         for (ColumnDefinition column : Iterables.concat(baseCf.partitionKeyColumns(), baseCf.clusteringColumns()))
         {

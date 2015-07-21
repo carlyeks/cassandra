@@ -39,6 +39,7 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.UnauthorizedException;
 import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.MigrationManager;
 import org.apache.cassandra.thrift.ThriftValidation;
 import org.apache.cassandra.transport.Event;
@@ -124,9 +125,18 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
             if (selectable instanceof Selectable.WritetimeOrTTL.Raw)
                 throw new InvalidRequestException("Cannot use function when defining a materialized view");
             ColumnIdentifier identifier = (ColumnIdentifier) selectable.prepare(cfm);
-            included.add(identifier);
             if (selector.alias != null)
                 throw new InvalidRequestException(String.format("Cannot alias column '%s' as '%s' when defining a materialized view", identifier.toString(), selector.alias.toString()));
+
+            ColumnDefinition cdef = cfm.getColumnDefinition(identifier);
+
+            if (cdef == null)
+                throw new InvalidRequestException("Unknown column name detected in CREATE MATERIALIZED VIEW statement : "+identifier);
+
+            if (cdef.isStatic())
+                ClientWarn.warn(String.format("Unable to include static column '%s' in Materialized View SELECT statement", identifier));
+            else
+                included.add(identifier);
         }
 
         Set<ColumnIdentifier.Raw> targetPrimaryKeys = new HashSet<>();
@@ -142,6 +152,9 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 
             if (cfm.getColumnDefinition(identifier.prepare(cfm)).type.isMultiCell())
                 throw new InvalidRequestException(String.format("Cannot use MultiCell column '%s' in PRIMARY KEY of materialized view", identifier));
+
+            if (cdef.isStatic())
+                throw new InvalidRequestException(String.format("Cannot use Static column '%s' in PRIMARY KEY of materialized view", identifier));
         }
 
         Set<ColumnIdentifier> basePrimaryKeyCols = new HashSet<>();
