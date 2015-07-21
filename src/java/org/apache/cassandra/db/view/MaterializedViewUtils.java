@@ -19,11 +19,19 @@
 package org.apache.cassandra.db.view;
 
 import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+import com.google.common.collect.Multimap;
+
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
+import org.apache.cassandra.locator.TokenMetadata;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 public final class MaterializedViewUtils
@@ -56,17 +64,38 @@ public final class MaterializedViewUtils
     public static InetAddress getViewNaturalEndpoint(String keyspaceName, Token baseToken, Token viewToken)
     {
         AbstractReplicationStrategy replicationStrategy = Keyspace.open(keyspaceName).getReplicationStrategy();
-        List<InetAddress> baseNaturalEndpoints = replicationStrategy.getNaturalEndpoints(baseToken);
-        List<InetAddress> viewNaturalEndpoints = replicationStrategy.getNaturalEndpoints(viewToken);
+
+        String localDataCenter = DatabaseDescriptor.getEndpointSnitch().getDatacenter(FBUtilities.getBroadcastAddress());
+        List<InetAddress> localBaseEndpoints = new ArrayList<>();
+        List<InetAddress> localViewEndpoints = new ArrayList<>();
+        for (InetAddress baseEndpoint : replicationStrategy.getNaturalEndpoints(baseToken))
+        {
+            if (DatabaseDescriptor.getEndpointSnitch().getDatacenter(baseEndpoint).equals(localDataCenter))
+                localBaseEndpoints.add(baseEndpoint);
+        }
+
+        for (InetAddress viewEndpoint : replicationStrategy.getNaturalEndpoints(viewToken))
+        {
+            // If we are a base endpoint which is also a view replica, we use ourselves as our view replica
+            if (viewEndpoint.equals(FBUtilities.getBroadcastAddress()))
+                return viewEndpoint;
+
+            // We have to remove any endpoint which is shared between the base and the view, as it will select itself
+            // and throw off the counts otherwise.
+            if (localBaseEndpoints.contains(viewEndpoint))
+                localBaseEndpoints.remove(viewEndpoint);
+            else if (DatabaseDescriptor.getEndpointSnitch().getDatacenter(viewEndpoint).equals(localDataCenter))
+                localViewEndpoints.add(viewEndpoint);
+        }
 
         // The replication strategy will be the same for the base and the view, as they must belong to the same keyspace.
         // Since the same replication strategy is used, the same placement should be used and we should get the same
         // number of replicas for all of the tokens in the ring.
-        assert baseNaturalEndpoints.size() == viewNaturalEndpoints.size() : "Replication strategy should have the same number of endpoints for the base and the view";
-        int baseIdx = baseNaturalEndpoints.indexOf(FBUtilities.getBroadcastAddress());
+        assert localBaseEndpoints.size() == localViewEndpoints.size() : "Replication strategy should have the same number of endpoints for the base and the view";
+        int baseIdx = localBaseEndpoints.indexOf(FBUtilities.getBroadcastAddress());
         if (baseIdx < 0)
             throw new RuntimeException("Trying to get the view natural endpoint on a non-data replica");
 
-        return viewNaturalEndpoints.get(baseIdx);
+        return localViewEndpoints.get(baseIdx);
     }
 }

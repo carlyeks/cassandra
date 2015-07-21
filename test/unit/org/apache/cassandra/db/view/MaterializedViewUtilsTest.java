@@ -26,6 +26,7 @@ import java.util.Map;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import junit.framework.Assert;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.Keyspace;
@@ -78,6 +79,38 @@ public class MaterializedViewUtilsTest
                                                                                    new StringToken("CA"),
                                                                                    new StringToken("BB"));
 
-        assert naturalEndpoint.equals(InetAddress.getByName("127.0.0.5"));
+        Assert.assertEquals(InetAddress.getByName("127.0.0.2"), naturalEndpoint);
+    }
+
+
+    @Test
+    public void testLocalHostPreference() throws Exception
+    {
+        TokenMetadata metadata = StorageService.instance.getTokenMetadata();
+        metadata.clearUnsafe();
+
+        // DC1
+        metadata.updateNormalToken(new StringToken("A"), InetAddress.getByName("127.0.0.1"));
+        metadata.updateNormalToken(new StringToken("C"), InetAddress.getByName("127.0.0.2"));
+
+        // DC2
+        metadata.updateNormalToken(new StringToken("B"), InetAddress.getByName("127.0.0.4"));
+        metadata.updateNormalToken(new StringToken("D"), InetAddress.getByName("127.0.0.5"));
+
+        Map<String, String> replicationMap = new HashMap<>();
+        replicationMap.put(KeyspaceParams.Replication.CLASS, NetworkTopologyStrategy.class.getName());
+
+        replicationMap.put("DC1", "2");
+        replicationMap.put("DC2", "2");
+
+        Keyspace.clear("Keyspace1");
+        KeyspaceMetadata meta = KeyspaceMetadata.create("Keyspace1", KeyspaceParams.create(false, replicationMap));
+        Schema.instance.setKeyspaceMetadata(meta);
+
+        InetAddress naturalEndpoint = MaterializedViewUtils.getViewNaturalEndpoint("Keyspace1",
+                                                                                   new StringToken("CA"),
+                                                                                   new StringToken("BB"));
+
+        Assert.assertEquals(InetAddress.getByName("127.0.0.1"), naturalEndpoint);
     }
 }
