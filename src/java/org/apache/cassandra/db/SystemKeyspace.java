@@ -273,7 +273,7 @@ public final class SystemKeyspace
                 + "ranges set<blob>,"
                 + "PRIMARY KEY ((keyspace_name)))");
 
-    public static final CFMetaData MaterializedViewsBuilds =
+    public static final CFMetaData MaterializedViewsBuildsInProgress =
         compile(MATERIALIZEDVIEWS_BUILDS_IN_PROGRESS,
                 "materialized views builds current progress",
                 "CREATE TABLE %s ("
@@ -432,7 +432,7 @@ public final class SystemKeyspace
                          SSTableActivity,
                          SizeEstimates,
                          AvailableRanges,
-                         MaterializedViewsBuilds,
+                         MaterializedViewsBuildsInProgress,
                          BuiltMaterializedViews,
                          LegacyKeyspaces,
                          LegacyColumnfamilies,
@@ -640,7 +640,7 @@ public final class SystemKeyspace
         // We flush the view built first, because if we fail now, we'll restart at the last place we checkpointed
         // materialized view build.
         // If we flush the delete first, we'll have to restart from the beginning.
-        // Also, if the build succeeded, but the materailized view build failed, we will be able to skip the
+        // Also, if the build succeeded, but the materialized view build failed, we will be able to skip the
         // materialized view build check next boot.
         setMaterializedViewBuilt(ksname, viewName);
         forceBlockingFlush(BUILT_MATERIALIZEDVIEWS);

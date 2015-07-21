@@ -55,15 +55,14 @@ public class MaterializedViewTest extends CQLTester
         requireNetwork();
     }
 
-    private com.datastax.driver.core.ResultSet updateMV(String query, Object... params) throws Throwable
+    private void updateMV(String query, Object... params) throws Throwable
     {
-        com.datastax.driver.core.ResultSet set = executeNet(protocolVersion, query, params);
+        executeNet(protocolVersion, query, params);
         while (!(((SEPExecutor) StageManager.getStage(Stage.MATERIALIZED_VIEW_MUTATION)).getPendingTasks() == 0
                  && ((SEPExecutor) StageManager.getStage(Stage.MATERIALIZED_VIEW_MUTATION)).getActiveCount() == 0))
         {
             Thread.sleep(1);
         }
-        return set;
     }
 
 

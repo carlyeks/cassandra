@@ -15,7 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.cassandra.cql3.statements;
 
 import java.util.ArrayList;
@@ -143,8 +142,8 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     // We could have type == null for old dropped columns, in which case we play it safe and refuse
                     if (dropped != null && (dropped.type == null || (dropped.type instanceof CollectionType && !type.isCompatibleWith(dropped.type))))
                         throw new InvalidRequestException(String.format("Cannot add a collection with the name %s " +
-                                                                        "because a collection with the same name and a different type%s has already been used in the past",
-                                                                        columnName, dropped.type == null ? "" : " (" + dropped.type.asCQL3Type() + ")"));
+                                    "because a collection with the same name and a different type%s has already been used in the past",
+                                    columnName, dropped.type == null ? "" : " (" + dropped.type.asCQL3Type() + ")"));
                 }
 
                 Integer componentIndex = cfm.isCompound() ? cfm.comparator.size() : null;
@@ -152,8 +151,8 @@ public class AlterTableStatement extends SchemaAlteringStatement
                                         ? ColumnDefinition.staticDef(cfm, columnName.bytes, type, componentIndex)
                                         : ColumnDefinition.regularDef(cfm, columnName.bytes, type, componentIndex));
 
-                // Adding a column to a table which has a SELECT * materialized view requires the column to be
-                // added to the materialized view as well
+                // Adding a column to a table which has an include all materialized view requires the column to be added
+                // to the materialized view as well
                 for (MaterializedViewDefinition mv : cfm.getMaterializedViews().values())
                 {
                     if (mv.includeAll)
@@ -320,6 +319,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                         materializedViewUpdates.add(indexCfm);
                     }
                 }
+                break;
         }
 
         if (materializedViewUpdates != null)

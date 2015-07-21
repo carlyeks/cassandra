@@ -188,7 +188,7 @@ public class MaterializedView
     }
 
     /**
-     * Creates a Mutation containing a range tombstone for a base key and LiveRowState.
+     * @return Mutation containing a range tombstone for a base partition key and TemporalRow.
      */
     private Mutation createTombstone(TemporalRow temporalRow,
                                      DecoratedKey partitionKey,
@@ -199,7 +199,8 @@ public class MaterializedView
     }
 
     /**
-     * Creates a Mutation containing a complex tombstone for a base key, a LiveRowState, and a collection identifier.
+     * @return Mutation containing a complex tombstone for a base partition key, a TemporalRow, and the collection's
+     *         column identifier.
      */
     private Mutation createComplexTombstone(TemporalRow temporalRow,
                                             DecoratedKey partitionKey,
@@ -214,9 +215,8 @@ public class MaterializedView
     }
 
     /**
-     * Creates the DecoratedKey for the view's partition key given a LiveRowState.
-     * @return View's DecoratedKey or null, if one of hte view's primary key components has an invalid resolution from
-     *         the LiveRowState and its Resolver
+     * @return View's DecoratedKey or null, if one of the view's primary key components has an invalid resolution from
+     *         the TemporalRow and its Resolver
      */
     private DecoratedKey targetPartitionKey(TemporalRow temporalRow, TemporalRow.Resolver resolver)
     {
@@ -238,7 +238,11 @@ public class MaterializedView
                                                                                 .make(partitionKey)));
     }
 
-
+    /**
+     * @return mutation which contains the tombstone for the referenced TemporalRow, or null if not necessary.
+     * TemporalRow's can reference at most one view row; there will be at most one row to be tombstoned, so only one
+     * mutation is necessary
+     */
     private Mutation createPartitionTombstonesForUpdates(TemporalRow temporalRow, long timestamp)
     {
         // Primary Key and Clustering columns do not generate tombstones
@@ -260,6 +264,9 @@ public class MaterializedView
         return createTombstone(temporalRow, targetPartitionKey(temporalRow, resolver), timestamp, resolver);
     }
 
+    /**
+     * @return Mutation which is the transformed base table mutation for the materialized view.
+     */
     private Mutation createMutationsForInserts(TemporalRow temporalRow, long timestamp, boolean tombstonesGenerated)
     {
         DecoratedKey partitionKey = targetPartitionKey(temporalRow, TemporalRow.latest);
@@ -307,7 +314,11 @@ public class MaterializedView
         return builder.build();
     }
 
-
+    /**
+     * @param upd Update which possibly contains deletion info for which to generate view tombstones.
+     * @return    View Tombstones which delete all of the rows which have been removed from the base table with
+     *            {@param upd}
+     */
     private Collection<Mutation> createForDeletionInfo(TemporalRow.Set rowSet, AbstractPartitionData upd)
     {
         final TemporalRow.Resolver resolver = TemporalRow.earliest;
@@ -316,6 +327,7 @@ public class MaterializedView
 
         List<Mutation> mutations = new ArrayList<>();
 
+        // Check the complex columns to see if there are any which may have tombstones we need to create for the view
         if (!baseComplexColumns.get().isEmpty())
         {
             for (Row row : upd)
@@ -340,8 +352,12 @@ public class MaterializedView
             }
         }
 
-        if (deletionInfo.hasRanges() || deletionInfo.getPartitionDeletion().markedForDeleteAt() != Long.MIN_VALUE)
+        if (!deletionInfo.isLive())
         {
+            // We have to generate tombstones for all of the affected rows, but we don't have the information in order
+            // to create them. This requires that we perform a read for the entire range that is being tombstoned, and
+            // generate a tombstone for each. This may be slow, because a single range tombstone can cover up to an
+            // entire partition of data which is not distributed on a single partition node.
             ReadCommand command;
             DecoratedKey dk = rowSet.dk;
 
@@ -372,6 +388,7 @@ public class MaterializedView
 
             QueryPager pager = command.getPager(null);
 
+            // Add all of the rows which were recovered from the query to the row set
             while (!pager.isExhausted())
             {
                 try (ReadOrderGroup orderGroup = pager.startOrderGroup();
@@ -390,15 +407,20 @@ public class MaterializedView
                     }
                 }
             }
-            
+
+            // If the temporal row has been deleted by the deletion info, we generate the corresponding range tombstone
+            // for the view.
             for (TemporalRow temporalRow : rowSet)
             {
-                DecoratedKey value = targetPartitionKey(temporalRow, resolver);
-                if (value != null)
+                if (!temporalRow.isLive(deletionInfo, resolver))
                 {
-                    Mutation mutation = createTombstone(temporalRow, value, timestamp, resolver);
-                    if (mutation != null)
-                        mutations.add(mutation);
+                    DecoratedKey value = targetPartitionKey(temporalRow, resolver);
+                    if (value != null)
+                    {
+                        Mutation mutation = createTombstone(temporalRow, value, timestamp, resolver);
+                        if (mutation != null)
+                            mutations.add(mutation);
+                    }
                 }
             }
         }
@@ -406,6 +428,9 @@ public class MaterializedView
         return !mutations.isEmpty() ? mutations : null;
     }
 
+    /**
+     * Read and update temporal rows in the set which have corresponding values stored on the local node
+     */
     private void readLocalRows(TemporalRow.Set rowSet)
     {
         SinglePartitionSliceBuilder builder = new SinglePartitionSliceBuilder(baseCfs, rowSet.dk);
@@ -434,23 +459,30 @@ public class MaterializedView
         }
     }
 
+    /**
+     * @return Set of rows which are contained in the partition update {@param upd}
+     */
     private TemporalRow.Set separateRows(ByteBuffer key, AbstractPartitionData upd)
     {
         TemporalRow.Set rowSet = new TemporalRow.Set(baseCfs, key);
 
-        // For each cell name, we need to grab the clustering columns
         for (Row row : upd)
             rowSet.addRow(row, true);
 
         return rowSet;
     }
 
+    /**
+     * @param isBuilding If the view is currently being built, we do not query the values which are already stored,
+     *                   since all of the update will already be present in the base table.
+     * @return View mutations which represent the changes necessary as long as previously created mutations for the view
+     *         have been applied successfully. This is based solely on the changes that are necessary given the current
+     *         state of the base table and the newly applying partition data.
+     */
     public Collection<Mutation> createMutations(ByteBuffer key, AbstractPartitionData upd, boolean isBuilding)
     {
         if (!updateAffectsView(upd))
-        {
             return null;
-        }
 
         TemporalRow.Set rowSet = separateRows(key, upd);
 
@@ -463,6 +495,8 @@ public class MaterializedView
         {
             boolean tombstonesInserted = false;
 
+            // If we are building, there is no need to check for partition tombstones; those values will not be present
+            // in the partition data
             if (!isBuilding)
             {
                 Mutation partitionTombstone = createPartitionTombstonesForUpdates(temporalRow, upd.maxTimestamp());

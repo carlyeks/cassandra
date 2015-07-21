@@ -171,6 +171,14 @@ public abstract class AbstractPartitionData implements Partition, Iterable<Row>
     }
 
     /**
+     * @return the maximum timestamp in this partition
+     */
+    public long maxTimestamp()
+    {
+        return maxTimestamp;
+    }
+
+    /**
      * The deletion info for the partition update.
      *
      * <b>warning:</b> the returned object should be used in a read-only fashion. In particular,
@@ -380,16 +388,6 @@ public abstract class AbstractPartitionData implements Partition, Iterable<Row>
     private RowIterator createRowIterator(ColumnFilter columns, boolean reversed)
     {
         return reversed ? new ReverseRowIterator(columns) : new ForwardRowIterator(columns);
-    }
-
-    /**
-     * The maximum timestamp in this partition.
-     *
-     * @return the maximum timestamp in this partition.
-     */
-    public long maxTimestamp()
-    {
-        return maxTimestamp;
     }
 
     /**

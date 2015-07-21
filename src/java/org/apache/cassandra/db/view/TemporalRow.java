@@ -40,7 +40,9 @@ import org.apache.cassandra.db.Clustering;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Conflicts;
 import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.DeletionInfo;
 import org.apache.cassandra.db.LivenessInfo;
+import org.apache.cassandra.db.RangeTombstone;
 import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.rows.Cell;
@@ -126,7 +128,7 @@ public class TemporalRow
     private static class TemporalCell
     {
         public final ByteBuffer value;
-        private final LivenessInfo liveness;
+        public final LivenessInfo liveness;
         public final boolean isNew;
 
         private TemporalCell(ByteBuffer value, LivenessInfo liveness, boolean isNew)
@@ -151,6 +153,80 @@ public class TemporalRow
             if (resolution == Conflicts.Resolution.LEFT_WINS)
                 return that;
             return this;
+        }
+
+        public Cell cell(ColumnDefinition definition, CellPath cellPath, long newTimeStamp)
+        {
+            final LivenessInfo liveness = this.isNew ? this.liveness.withUpdatedTimestamp(newTimeStamp)
+                                                : this.liveness.withUpdatedTimestamp(newTimeStamp - 1);
+
+            return new org.apache.cassandra.db.rows.Cell()
+            {
+                public ColumnDefinition column()
+                {
+                    return definition;
+                }
+
+                public boolean isCounterCell()
+                {
+                    return false;
+                }
+
+                public ByteBuffer value()
+                {
+                    return TemporalCell.this.value;
+                }
+
+                public LivenessInfo livenessInfo()
+                {
+                    return liveness;
+                }
+
+                public boolean isTombstone()
+                {
+                    return livenessInfo().hasLocalDeletionTime() && !livenessInfo().hasTTL();
+                }
+
+                public boolean isExpiring()
+                {
+                    return livenessInfo().hasTTL();
+                }
+
+                public boolean isLive(int nowInSec)
+                {
+                    return liveness.isLive(nowInSec);
+                }
+
+                public CellPath path()
+                {
+                    return cellPath;
+                }
+
+                public void writeTo(Row.Writer writer)
+                {
+
+                }
+
+                public void digest(MessageDigest digest)
+                {
+
+                }
+
+                public void validate()
+                {
+
+                }
+
+                public int dataSize()
+                {
+                    return TemporalCell.this.value.remaining();
+                }
+
+                public org.apache.cassandra.db.rows.Cell takeAlias()
+                {
+                    return this;
+                }
+            };
         }
     }
 
@@ -251,6 +327,31 @@ public class TemporalRow
         return null;
     }
 
+    public boolean isLive(DeletionInfo deletionInfo, Resolver resolver)
+    {
+        if (deletionInfo.isLive())
+            return true;
+
+        Clustering baseClustering = baseClusteringBuilder().build();
+
+        for (Map.Entry<ColumnIdentifier, Map<CellPath, SortedMap<Long, TemporalCell>>> innerMap : columnValues.entrySet())
+        {
+            ColumnIdentifier identifier = innerMap.getKey();
+            ColumnDefinition definition = baseCfs.metadata.getColumnDefinition(identifier);
+            for (Map.Entry<CellPath, SortedMap<Long, TemporalCell>> complexCells : innerMap.getValue().entrySet())
+            {
+                CellPath path = complexCells.getKey();
+                TemporalCell cell = resolver.resolve(complexCells.getValue().values());
+                if (deletionInfo.isDeleted(baseClustering, cell.cell(definition, path, cell.liveness.timestamp())))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     public Collection<org.apache.cassandra.db.rows.Cell> values(ColumnDefinition definition, Resolver resolver, final long newTimeStamp)
     {
         Map<CellPath, SortedMap<Long, TemporalCell>> innerMap = columnValues.get(definition.name);
@@ -265,85 +366,18 @@ public class TemporalRow
         {
             TemporalCell cell = resolver.resolve(pathAndCells.getValue().values());
 
-
             if (cell != null)
-            {
-                final LivenessInfo liveness = cell.isNew ? cell.liveness.withUpdatedTimestamp(newTimeStamp)
-                                                         : cell.liveness.withUpdatedTimestamp(newTimeStamp - 1);
-
-                value.add(new org.apache.cassandra.db.rows.Cell()
-                {
-                    public ColumnDefinition column()
-                    {
-                        return definition;
-                    }
-
-                    public boolean isCounterCell()
-                    {
-                        return false;
-                    }
-
-                    public ByteBuffer value()
-                    {
-                        return cell.value;
-                    }
-
-                    public LivenessInfo livenessInfo()
-                    {
-                        return liveness;
-                    }
-
-                    public boolean isTombstone()
-                    {
-                        return livenessInfo().hasLocalDeletionTime() && !livenessInfo().hasTTL();
-                    }
-
-                    public boolean isExpiring()
-                    {
-                        return livenessInfo().hasTTL();
-                    }
-
-                    public boolean isLive(int nowInSec)
-                    {
-                        return cell.liveness.isLive(nowInSec);
-                    }
-
-                    public CellPath path()
-                    {
-                        return pathAndCells.getKey();
-                    }
-
-                    public void writeTo(Row.Writer writer)
-                    {
-
-                    }
-
-                    public void digest(MessageDigest digest)
-                    {
-
-                    }
-
-                    public void validate()
-                    {
-
-                    }
-
-                    public int dataSize()
-                    {
-                        return cell.value.remaining();
-                    }
-
-                    public org.apache.cassandra.db.rows.Cell takeAlias()
-                    {
-                        return this;
-                    }
-                });
-            }
+                value.add(cell.cell(definition, pathAndCells.getKey(), newTimeStamp));
         }
         return value;
     }
 
     public Slice baseSlice()
+    {
+        return baseClusteringBuilder().buildSlice();
+    }
+
+    private CBuilder baseClusteringBuilder()
     {
         CFMetaData metadata = baseCfs.metadata;
         CBuilder builder = CBuilder.create(metadata.comparator);
@@ -355,7 +389,7 @@ public class TemporalRow
         for (ByteBuffer byteBuffer : buffers)
             builder = builder.add(byteBuffer);
 
-        return builder.buildSlice();
+        return builder;
     }
 
     static class Set implements Iterable<TemporalRow>

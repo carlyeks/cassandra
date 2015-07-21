@@ -701,7 +701,7 @@ public final class SchemaKeyspace
         for (CFMetaData schemaTable : All)
             mutation.add(PartitionUpdate.fullPartitionDelete(schemaTable, mutation.key(), timestamp, nowInSec));
         mutation.add(PartitionUpdate.fullPartitionDelete(SystemKeyspace.BuiltMaterializedViews, mutation.key(), timestamp, nowInSec));
-        mutation.add(PartitionUpdate.fullPartitionDelete(SystemKeyspace.MaterializedViewsBuilds, mutation.key(), timestamp, nowInSec));
+        mutation.add(PartitionUpdate.fullPartitionDelete(SystemKeyspace.MaterializedViewsBuildsInProgress, mutation.key(), timestamp, nowInSec));
         return mutation;
     }
 
@@ -1275,8 +1275,8 @@ public final class SchemaKeyspace
     private static void dropMaterializedViewFromSchemaMutation(CFMetaData table, MaterializedViewDefinition materializedView, long timestamp, Mutation mutation)
     {
         RowUpdateBuilder.deleteRow(MaterializedViews, timestamp, mutation, table.cfName, materializedView.viewName);
-        RowUpdateBuilder.deleteRow(SystemKeyspace.MaterializedViewsBuilds, timestamp, mutation, materializedView.viewName);
-        RowUpdateBuilder.deleteRow(SystemKeyspace.BuiltMaterializedViews, timestamp, mutation, materializedView.viewName);
+        RowUpdateBuilder.deleteRow(SystemKeyspace.BuiltMaterializedViews, timestamp, mutation, materializedView.viewName); 
+        RowUpdateBuilder.deleteRow(SystemKeyspace.MaterializedViewsBuildsInProgress, timestamp, mutation, materializedView.viewName);
     }
 
     private static void addUpdatedMaterializedViewDefinitionToSchemaMutation(CFMetaData table, MaterializedViewDefinition materializedView, long timestamp, Mutation mutation)

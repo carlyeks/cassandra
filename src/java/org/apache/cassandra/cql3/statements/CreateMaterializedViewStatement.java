@@ -184,7 +184,11 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         if (targetClusteringColumns.isEmpty())
             throw new InvalidRequestException("No columns are defined for Materialized View other than primary key");
 
-        MaterializedViewDefinition definition = new MaterializedViewDefinition(base.getColumnFamily(), columnFamily(), targetPartitionKeys, targetClusteringColumns, included);
+        MaterializedViewDefinition definition = new MaterializedViewDefinition(base.getColumnFamily(),
+                                                                               columnFamily(),
+                                                                               targetPartitionKeys,
+                                                                               targetClusteringColumns,
+                                                                               included);
 
         CFMetaData indexCf = MaterializedView.getCFMetaData(definition, cfm, properties);
         try

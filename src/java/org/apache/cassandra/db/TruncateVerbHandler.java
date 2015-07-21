@@ -20,8 +20,6 @@ package org.apache.cassandra.db;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.config.MaterializedViewDefinition;
-import org.apache.cassandra.db.view.MaterializedView;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.net.IVerbHandler;
 import org.apache.cassandra.net.MessageIn;

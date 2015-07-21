@@ -321,7 +321,7 @@ public abstract class AbstractReadCommandBuilder
                 end = StorageService.getPartitioner().getMinimumToken().maxKeyBound();
                 endInclusive = true;
             }
-            
+
             AbstractBounds<PartitionPosition> bounds;
             if (startInclusive && endInclusive)
                 bounds = new Bounds<>(start, end);

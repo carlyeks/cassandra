@@ -40,6 +40,7 @@ import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
+import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.exceptions.UnavailableException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
@@ -146,15 +147,10 @@ public class MaterializedViewManager
     }
 
     /**
-     * Calculates and pushes updates to the views replicas. The replicas
-     *
-     * @param key
-     * @param cf
-     * @throws UnavailableException
-     * @throws OverloadedException
-     * @throws WriteTimeoutException
+     * Calculates and pushes updates to the views replicas. The replicas are determined by
+     * {@link MaterializedViewUtils#getViewNaturalEndpoint(String, Token, Token)}.
      */
-    public void pushReplicaUpdates(ByteBuffer key, PartitionUpdate cf) throws UnavailableException, OverloadedException, WriteTimeoutException
+    public void pushReplicaUpdates(ByteBuffer key, PartitionUpdate update) throws UnavailableException, OverloadedException, WriteTimeoutException
     {
         // This happens when we are replaying from commitlog. In that case, we have already sent this commit off to the
         // view node.
@@ -163,7 +159,7 @@ public class MaterializedViewManager
         List<Mutation> mutations = null;
         for (Map.Entry<String, MaterializedView> view : viewsByName.entrySet())
         {
-            Collection<Mutation> viewMutations = view.getValue().createMutations(key, cf, false);
+            Collection<Mutation> viewMutations = view.getValue().createMutations(key, update, false);
             if (viewMutations != null && !viewMutations.isEmpty())
             {
                 if (mutations == null)

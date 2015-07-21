@@ -687,14 +687,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         }
     }
 
-    public void init()
-    {
-        initRowCache();
-        materializedViewManager.init();
-    }
-
     // must be called after all sstables are loaded since row cache merges all row versions
-    public void initRowCache()
+    public void init()
     {
         if (!isRowCacheEnabled())
             return;
@@ -708,6 +702,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                         cachedRowsRead,
                         keyspace.getName(),
                         name);
+
+        materializedViewManager.init();
     }
 
     public void initCounterCache()
@@ -2049,9 +2045,11 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         logger.debug("truncate complete");
     }
 
+    /**
+     * Drops current memtable without flushing to disk. This should only be called when truncating a column family which is not durable.
+     */
     public void dumpMemtable()
     {
-        // just nuke the memtable data w/o writing to disk first
         synchronized (data)
         {
             final Flush flush = new Flush(true);
