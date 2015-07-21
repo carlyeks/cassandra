@@ -180,6 +180,10 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         // overwrite values in the materialized view. We cannot support "collapsing" the base table into a smaller
         // number of rows in the view because if we need to generate a tombstone, we have no way of knowing which value
         // is currently being used in the view and whether or not to generate a tombstone.
+        // In order to not surprise our users, we require that they include all of the columns. We provide them with
+        // a list of all of the columns left to include.
+        boolean missingClusteringColumns = false;
+        StringBuilder columnNames = new StringBuilder();
         for (ColumnDefinition def : cfm.allColumns())
         {
             if (!def.isPrimaryKeyColumn()) continue;
@@ -187,9 +191,16 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
             ColumnIdentifier identifier = def.name;
             if (!targetClusteringColumns.contains(identifier) && !targetPartitionKeys.contains(identifier))
             {
-                targetClusteringColumns.add(identifier);
+                if (missingClusteringColumns)
+                    columnNames.append(',');
+                else
+                    missingClusteringColumns = true;
+                columnNames.append(identifier);
             }
         }
+        if (missingClusteringColumns)
+            throw new InvalidRequestException(String.format("Cannot create Materialized View %s without primary key columns from base %s (%s)",
+                                                            columnFamily(), base.getColumnFamily(), columnNames.toString()));
 
         if (targetPartitionKeys.isEmpty())
             throw new InvalidRequestException("Must select at least a column for a Materialized View");
