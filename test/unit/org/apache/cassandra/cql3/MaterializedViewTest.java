@@ -32,7 +32,6 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.datastax.driver.core.*;
-import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.exceptions.InvalidQueryException;
 import junit.framework.Assert;
 import org.apache.cassandra.concurrent.SEPExecutor;
@@ -41,6 +40,7 @@ import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.Schema;
+import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.serializers.SimpleDateSerializer;
 import org.apache.cassandra.serializers.TimeSerializer;
@@ -138,48 +138,6 @@ public class MaterializedViewTest extends CQLTester
 
         try
         {
-            executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (sval,k)");
-            Assert.fail("MV on static should fail");
-        }
-        catch (InvalidQueryException e)
-        {
-        }
-
-
-
-        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (val,k)");
-
-
-        for (int i = 0; i < 100; i++)
-            updateMV("INSERT into %s (k,c,sval,val)VALUES(?,?,?,?)", 0, i % 2, "bar" + i, "baz");
-
-
-        Assert.assertEquals(2, execute("select * from %s").size());
-
-        assertRows(execute("SELECT sval from %s"), row("bar99"), row("bar99"));
-
-
-        Assert.assertEquals(2, execute("select * from mv_static").size());
-
-        assertInvalid("SELECT sval from mv_static");
-    }
-
-
-    @Test
-    public void testStaticTable() throws Throwable
-    {
-        createTable("CREATE TABLE %s (" +
-                    "k int, " +
-                    "c int, " +
-                    "sval text static, " +
-                    "val text, "+
-                    "PRIMARY KEY(k,c))");
-
-        execute("USE " + keyspace());
-        executeNet(protocolVersion, "USE " + keyspace());
-
-        try
-        {
             executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_static AS SELECT * FROM %s PRIMARY KEY (sval,k,c)");
             Assert.fail("MV on static should fail");
         }
@@ -204,8 +162,55 @@ public class MaterializedViewTest extends CQLTester
         Assert.assertEquals(2, execute("select * from mv_static").size());
 
         assertInvalid("SELECT sval from mv_static");
+    }
 
-        executeNet(protocolVersion, "DROP MATERIALIZED VIEW mv_static");
+
+    @Test
+    public void testOldTimestamps() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "c int, " +
+                    "val text, " +
+                    "PRIMARY KEY(k,c))");
+
+        execute("USE " + keyspace());
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv_tstest AS SELECT * FROM %s PRIMARY KEY (val,k,c)");
+
+
+        for (int i = 0; i < 100; i++)
+            updateMV("INSERT into %s (k,c,val)VALUES(?,?,?)", 0, i % 2, "baz");
+
+
+        Keyspace.open(keyspace()).getColumnFamilyStore(currentTable()).forceBlockingFlush();
+
+        Assert.assertEquals(2, execute("select * from %s").size());
+        Assert.assertEquals(2, execute("select * from mv_tstest").size());
+
+        assertRows(execute("SELECT val from %s where k = 0 and c = 0"), row("baz"));
+        assertRows(execute("SELECT c from mv_tstest where k = 0 and val = ?", "baz"), row(0), row(1));
+
+
+
+        //Make sure an old TS does nothing
+        updateMV("UPDATE %s USING TIMESTAMP 100 SET val = ? where k = ? AND c = ?", "bar", 0, 0);
+
+
+        assertRows(execute("SELECT val from %s where k = 0 and c = 0"), row("baz"));
+        assertRows(execute("SELECT c from mv_tstest where k = 0 and val = ?", "baz"), row(0), row(1));
+        assertRows(execute("SELECT c from mv_tstest where k = 0 and val = ?", "bar"));
+
+
+        //Latest TS
+        updateMV("UPDATE %s SET val = ? where k = ? AND c = ?", "bar", 0, 0);
+
+
+        assertRows(execute("SELECT val from %s where k = 0 and c = 0"), row("bar"));
+        assertRows(execute("SELECT c from mv_tstest where k = 0 and val = ?", "bar"), row(0));
+        assertRows(execute("SELECT c from mv_tstest where k = 0 and val = ?", "baz"), row(1));
+
     }
 
     @Test
