@@ -749,13 +749,18 @@ createMaterializedViewStatement returns [CreateMaterializedViewStatement expr]
         List<ColumnIdentifier.Raw> compositeKeys = new ArrayList<>();
     }
     : K_CREATE K_MATERIALIZED K_VIEW (K_IF K_NOT K_EXISTS { ifNotExists = true; })? cf=columnFamilyName K_AS
-        select=selectStatement
+        K_SELECT sclause=selectClause K_FROM basecf=columnFamilyName
+        (K_WHERE wclause=mvWhereClause)?
         K_PRIMARY K_KEY (
         '(' '(' k1=cident { partitionKeys.add(k1); } ( ',' kn=cident { partitionKeys.add(kn); } )* ')' ( ',' c1=cident { compositeKeys.add(c1); } )* ')'
     |   '(' k1=cident { partitionKeys.add(k1); } ( ',' cn=cident { compositeKeys.add(cn); } )* ')'
         )
-        { $expr = new CreateMaterializedViewStatement(cf, select, partitionKeys, compositeKeys, ifNotExists); }
+        { $expr = new CreateMaterializedViewStatement(cf, basecf, sclause, wclause, partitionKeys, compositeKeys, ifNotExists); }
         ( K_WITH cfamProperty[expr.properties] ( K_AND cfamProperty[expr.properties] )*)?
+    ;
+
+mvWhereClause returns [List<ColumnIdentifier.Raw> expr]
+    : t1=cident { $expr = new ArrayList<ColumnIdentifier.Raw>(); $expr.add(t1); } K_IS K_NOT K_NULL (K_AND tN=cident { $expr.add(tN); } K_IS K_NOT K_NULL)*
     ;
 
 /**
@@ -1656,6 +1661,7 @@ K_DESC:        D E S C;
 K_ALLOW:       A L L O W;
 K_FILTERING:   F I L T E R I N G;
 K_IF:          I F;
+K_IS:          I S;
 K_CONTAINS:    C O N T A I N S;
 
 K_GRANT:       G R A N T;

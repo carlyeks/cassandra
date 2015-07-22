@@ -61,7 +61,7 @@ public class MaterializedViewLongTest extends CQLTester
 
         dropTable("DROP MATERIALIZED VIEW IF EXISTS " + keyspace() + ".mv");
 
-        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv AS SELECT * FROM %s PRIMARY KEY (c, a, b)");
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv AS SELECT * FROM %s WHERE c IS NOT NULL AND a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (c, a, b)");
 
         CyclicBarrier semaphore = new CyclicBarrier(writers);
 

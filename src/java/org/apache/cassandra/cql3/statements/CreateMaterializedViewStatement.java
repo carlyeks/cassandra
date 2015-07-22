@@ -46,20 +46,26 @@ import org.apache.cassandra.transport.Event;
 
 public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 {
-    private final SelectStatement.RawStatement select;
+    private final CFName baseName;
+    private final List<RawSelector> selectClause;
+    private final List<ColumnIdentifier.Raw> notNullWhereClause;
     private final List<ColumnIdentifier.Raw> partitionKeys;
     private final List<ColumnIdentifier.Raw> clusteringKeys;
     public final CFProperties properties = new CFProperties();
     private final boolean ifNotExists;
 
     public CreateMaterializedViewStatement(CFName viewName,
-                                           SelectStatement.RawStatement select,
+                                           CFName baseName,
+                                           List<RawSelector> selectClause,
+                                           List<ColumnIdentifier.Raw> notNullWhereClause,
                                            List<ColumnIdentifier.Raw> partitionKeys,
                                            List<ColumnIdentifier.Raw> clusteringKeys,
                                            boolean ifNotExists)
     {
         super(viewName);
-        this.select = select;
+        this.baseName = baseName;
+        this.selectClause = selectClause;
+        this.notNullWhereClause = notNullWhereClause;
         this.partitionKeys = partitionKeys;
         this.clusteringKeys = clusteringKeys;
         this.ifNotExists = ifNotExists;
@@ -68,9 +74,10 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 
     public void checkAccess(ClientState state) throws UnauthorizedException, InvalidRequestException
     {
-        select.prepareKeyspace(state);
+        if (!baseName.hasKeyspace())
+            baseName.setKeyspace(keyspace(), true);
         state.hasKeyspaceAccess(keyspace(), Permission.CREATE);
-        state.hasColumnFamilyAccess(select.keyspace(), select.columnFamily(), Permission.SELECT);
+        state.hasColumnFamilyAccess(baseName.getKeyspace(), baseName.getColumnFamily(), Permission.SELECT);
     }
 
     public void validate(ClientState state) throws RequestValidationException
@@ -88,34 +95,22 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         //  - make sure there is no where clause in the select statement
         //  - make sure there is not currently a table or view
 
-        if (!select.whereClause.isEmpty())
-            throw new InvalidRequestException("Cannot use where clause when defining a materialized view");
-        if (select.parameters.allowFiltering)
-            throw new InvalidRequestException("Cannot use 'ALLOW FILTERING' when defining a materialized view");
-        if (select.parameters.isDistinct)
-            throw new InvalidRequestException("Cannot use 'DISTINCT' when defining a materialized view");
-        if (select.parameters.isJson)
-            throw new InvalidRequestException("Cannot use 'JSON' when defining a materialized view");
-        if (select.limit != null)
-            throw new InvalidRequestException("Cannot use 'LIMIT' when defining a materialized view");
-
         properties.validate();
 
         if (properties.useCompactStorage)
             throw new InvalidRequestException("Cannot use 'COMPACT STORAGE' when defining a materialized view");
 
-        CFName base = select.cfName;
         // We enforce the keyspace because if the RF is different, the logic to wait for a
         // specific replica would break
-        if (!base.getKeyspace().equals(keyspace()))
+        if (!baseName.getKeyspace().equals(keyspace()))
             throw new InvalidRequestException("Cannot create a materialized view on a table in a separate keyspace");
 
-        CFMetaData cfm = ThriftValidation.validateColumnFamily(base.getKeyspace(), base.getColumnFamily());
+        CFMetaData cfm = ThriftValidation.validateColumnFamily(baseName.getKeyspace(), baseName.getColumnFamily());
         if (cfm.isCounter())
             throw new InvalidRequestException("Materialized views are not supported on counter tables");
 
         Set<ColumnIdentifier> included = new HashSet<>();
-        for (RawSelector selector : select.selectClause)
+        for (RawSelector selector : selectClause)
         {
             Selectable.Raw selectable = selector.selectable;
             if (selectable instanceof Selectable.WithFieldSelection.Raw)
@@ -163,17 +158,25 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
 
         List<ColumnIdentifier> targetClusteringColumns = new ArrayList<>();
         List<ColumnIdentifier> targetPartitionKeys = new ArrayList<>();
+        Set<ColumnIdentifier> notNullColumns = new HashSet<>();
+        if (notNullWhereClause != null)
+        {
+            for (ColumnIdentifier.Raw raw : notNullWhereClause)
+            {
+                notNullColumns.add(raw.prepare(cfm));
+            }
+        }
 
         // This is only used as an intermediate state; this is to catch whether multiple non-PK columns are used
         boolean hasNonPKColumn = false;
         for (ColumnIdentifier.Raw raw : partitionKeys)
         {
-            hasNonPKColumn = getColumnIdentifier(cfm, basePrimaryKeyCols, hasNonPKColumn, raw, targetPartitionKeys);
+            hasNonPKColumn = getColumnIdentifier(cfm, basePrimaryKeyCols, hasNonPKColumn, raw, targetPartitionKeys, notNullColumns);
         }
 
         for (ColumnIdentifier.Raw raw : clusteringKeys)
         {
-            hasNonPKColumn = getColumnIdentifier(cfm, basePrimaryKeyCols, hasNonPKColumn, raw, targetClusteringColumns);
+            hasNonPKColumn = getColumnIdentifier(cfm, basePrimaryKeyCols, hasNonPKColumn, raw, targetClusteringColumns, notNullColumns);
         }
 
         // We need to include all of the primary key colums from the base table in order to make sure that we do not
@@ -200,7 +203,7 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         }
         if (missingClusteringColumns)
             throw new InvalidRequestException(String.format("Cannot create Materialized View %s without primary key columns from base %s (%s)",
-                                                            columnFamily(), base.getColumnFamily(), columnNames.toString()));
+                                                            columnFamily(), baseName.getColumnFamily(), columnNames.toString()));
 
         if (targetPartitionKeys.isEmpty())
             throw new InvalidRequestException("Must select at least a column for a Materialized View");
@@ -208,7 +211,7 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         if (targetClusteringColumns.isEmpty())
             throw new InvalidRequestException("No columns are defined for Materialized View other than primary key");
 
-        MaterializedViewDefinition definition = new MaterializedViewDefinition(base.getColumnFamily(),
+        MaterializedViewDefinition definition = new MaterializedViewDefinition(baseName.getColumnFamily(),
                                                                                columnFamily(),
                                                                                targetPartitionKeys,
                                                                                targetClusteringColumns,
@@ -238,7 +241,8 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
                                                Set<ColumnIdentifier> basePK,
                                                boolean hasNonPKColumn,
                                                ColumnIdentifier.Raw raw,
-                                               List<ColumnIdentifier> columns)
+                                               List<ColumnIdentifier> columns,
+                                               Set<ColumnIdentifier> allowedPKColumns)
     {
         ColumnIdentifier identifier = raw.prepare(cfm);
 
@@ -246,6 +250,10 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         if (!isPk && hasNonPKColumn)
         {
             throw new InvalidRequestException(String.format("Cannot include more than one non-primary key column '%s' in materialized view partition key", identifier));
+        }
+        if (!allowedPKColumns.contains(identifier))
+        {
+            throw new InvalidRequestException(String.format("Primary key column '%s' is required to be filtered by 'IS NOT NULL'", identifier));
         }
 
         columns.add(identifier);
