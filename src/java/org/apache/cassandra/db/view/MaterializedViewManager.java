@@ -80,7 +80,7 @@ public class MaterializedViewManager
     {
         List<ColumnFamilyStore> viewColumnFamilies = new ArrayList<>();
         for (MaterializedView view : allViews())
-            viewColumnFamilies.add(view.viewCfs);
+            viewColumnFamilies.add(view.getViewCfs());
         return viewColumnFamilies;
     }
 
