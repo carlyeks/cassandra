@@ -330,7 +330,7 @@ public final class LegacySchemaMigrator
             cfm.bloomFilterFpChance(cfm.getBloomFilterFpChance());
 
         if (tableRow.has("dropped_columns"))
-            addDroppedColumns(cfm, tableRow.getMap("dropped_columns", UTF8Type.instance, LongType.instance), Collections.emptyMap());
+            addDroppedColumns(cfm, rawComparator, tableRow.getMap("dropped_columns", UTF8Type.instance, LongType.instance));
 
         cfm.triggers(createTriggersFromTriggerRows(triggerRows));
 
@@ -396,14 +396,33 @@ public final class LegacySchemaMigrator
         return false;
     }
 
-    private static void addDroppedColumns(CFMetaData cfm, Map<String, Long> droppedTimes, Map<String, String> types)
+    /*
+     * Prior to 3.0 we used to not store the type of the dropped columns, relying on all collection info being
+     * present in the comparator, forever. That allowed us to perform certain validations in AlterTableStatement
+     * (namely not allowing to re-add incompatible collection columns, with the same name, but a different type).
+     *
+     * In 3.0, we no longer preserve the original comparator, and reconstruct it from the columns instead. That means
+     * that we should preserve the type of the dropped columns now, and, during migration, fetch the types from
+     * the original comparator if necessary.
+     */
+    private static void addDroppedColumns(CFMetaData cfm, AbstractType<?> comparator, Map<String, Long> droppedTimes)
     {
+        AbstractType<?> last = comparator.getComponents().get(comparator.componentsCount() - 1);
+        Map<ByteBuffer, CollectionType> collections = last instanceof ColumnToCollectionType
+                                                    ? ((ColumnToCollectionType) last).defined
+                                                    : Collections.emptyMap();
+
         for (Map.Entry<String, Long> entry : droppedTimes.entrySet())
         {
             String name = entry.getKey();
+            ByteBuffer nameBytes = UTF8Type.instance.decompose(name);
             long time = entry.getValue();
-            AbstractType<?> type = types.containsKey(name) ? TypeParser.parse(types.get(name)) : null;
-            cfm.getDroppedColumns().put(UTF8Type.instance.decompose(name), new CFMetaData.DroppedColumn(type, time));
+
+            AbstractType<?> type = collections.containsKey(nameBytes)
+                                 ? collections.get(nameBytes)
+                                 : BytesType.instance;
+
+            cfm.getDroppedColumns().put(nameBytes, new CFMetaData.DroppedColumn(name, type, time));
         }
     }
 
@@ -468,7 +487,7 @@ public final class LegacySchemaMigrator
     private static ColumnDefinition.Kind deserializeKind(String kind)
     {
         if ("clustering_key".equalsIgnoreCase(kind))
-            return ColumnDefinition.Kind.CLUSTERING_COLUMN;
+            return ColumnDefinition.Kind.CLUSTERING;
         if ("compact_value".equalsIgnoreCase(kind))
             return ColumnDefinition.Kind.REGULAR;
         return Enum.valueOf(ColumnDefinition.Kind.class, kind.toUpperCase());
@@ -484,7 +503,7 @@ public final class LegacySchemaMigrator
     private static TriggerMetadata createTriggerFromTriggerRow(UntypedResultSet.Row row)
     {
         String name = row.getString("trigger_name");
-        String classOption = row.getMap("trigger_options", UTF8Type.instance, UTF8Type.instance).get("class");
+        String classOption = row.getTextMap("trigger_options").get("class");
         return new TriggerMetadata(name, classOption);
     }
 

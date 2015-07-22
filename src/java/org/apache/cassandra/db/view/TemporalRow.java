@@ -42,7 +42,6 @@ import org.apache.cassandra.db.Conflicts;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionInfo;
 import org.apache.cassandra.db.LivenessInfo;
-import org.apache.cassandra.db.RangeTombstone;
 import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.rows.Cell;
@@ -51,8 +50,10 @@ import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
-// This is a class that allows comparisons based on partition key and clustering columns, and resolves existing and
-// new mutation values
+/**
+ * Represents a single CQL Row in a base table, with both the currently persisted value and the value it will be updated
+ * to. The values are stored in both
+ */
 public class TemporalRow
 {
     public interface Resolver

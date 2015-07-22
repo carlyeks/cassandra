@@ -116,7 +116,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     switch (def.kind)
                     {
                         case PARTITION_KEY:
-                        case CLUSTERING_COLUMN:
+                        case CLUSTERING:
                             throw new InvalidRequestException(String.format("Invalid column name %s because it conflicts with a PRIMARY KEY part", columnName));
                         default:
                             throw new InvalidRequestException(String.format("Invalid column name %s because it conflicts with an existing column", columnName));
@@ -135,15 +135,20 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     if (cfm.isSuper())
                         throw new InvalidRequestException("Cannot use non-frozen collections with super column families");
 
-                    // If there used to be a collection column with the same name (that has been dropped), we could still have
-                    // some data using the old type, and so we can't allow adding a collection with the same name unless
-                    // the types are compatible (see #6276).
+                    // If there used to be a non-frozen collection column with the same name (that has been dropped),
+                    // we could still have some data using the old type, and so we can't allow adding a collection
+                    // with the same name unless the types are compatible (see #6276).
                     CFMetaData.DroppedColumn dropped = cfm.getDroppedColumns().get(columnName.bytes);
-                    // We could have type == null for old dropped columns, in which case we play it safe and refuse
-                    if (dropped != null && (dropped.type == null || (dropped.type instanceof CollectionType && !type.isCompatibleWith(dropped.type))))
-                        throw new InvalidRequestException(String.format("Cannot add a collection with the name %s " +
-                                    "because a collection with the same name and a different type%s has already been used in the past",
-                                    columnName, dropped.type == null ? "" : " (" + dropped.type.asCQL3Type() + ")"));
+                    if (dropped != null && dropped.type instanceof CollectionType
+                        && dropped.type.isMultiCell() && !type.isCompatibleWith(dropped.type))
+                    {
+                        String message =
+                            String.format("Cannot add a collection with the name %s because a collection with the same name"
+                                          + " and a different type (%s) has already been used in the past",
+                                          columnName,
+                                          dropped.type.asCQL3Type());
+                        throw new InvalidRequestException(message);
+                    }
                 }
 
                 Integer componentIndex = cfm.isCompound() ? cfm.comparator.size() : null;
@@ -188,7 +193,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                                                                            currentType.asCQL3Type(),
                                                                            validator));
                         break;
-                    case CLUSTERING_COLUMN:
+                    case CLUSTERING:
                         AbstractType<?> oldType = cfm.comparator.subtype(def.position());
                         // Note that CFMetaData.validateCompatibility already validate the change we're about to do. However, the error message it
                         // sends is a bit cryptic for a CQL3 user, so validating here for a sake of returning a better error message
@@ -241,7 +246,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 switch (def.kind)
                 {
                     case PARTITION_KEY:
-                    case CLUSTERING_COLUMN:
+                    case CLUSTERING:
                         throw new InvalidRequestException(String.format("Cannot drop PRIMARY KEY part %s", columnName));
                     case REGULAR:
                     case STATIC:

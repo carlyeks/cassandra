@@ -17,15 +17,16 @@
  */
 package org.apache.cassandra.config;
 
-import java.io.DataInput;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.base.Strings;
 import com.google.common.collect.*;
@@ -47,13 +48,11 @@ import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.LZ4Compressor;
+import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.SchemaKeyspace;
 import org.apache.cassandra.schema.Triggers;
-import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.UUIDGen;
-import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.utils.*;
 import org.github.jamm.Unmetered;
 
 /**
@@ -62,6 +61,11 @@ import org.github.jamm.Unmetered;
 @Unmetered
 public final class CFMetaData
 {
+    public enum Flag
+    {
+        SUPER, COUNTER, DENSE, COMPOUND
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(CFMetaData.class);
 
     public static final Serializer serializer = new Serializer();
@@ -170,8 +174,13 @@ public final class CFMetaData
     public final UUID cfId;                           // internal id, never exposed to user
     public final String ksName;                       // name of keyspace
     public final String cfName;                       // name of this column family
-    public final boolean isSuper;                     // is a thrift super column family
-    public final boolean isCounter;                   // is a counter table
+
+    private final ImmutableSet<Flag> flags;
+    private final boolean isDense;
+    private final boolean isCompound;
+    private final boolean isSuper;
+    private final boolean isCounter;
+
     public volatile ClusteringComparator comparator;  // bytes, long, timeuuid, utf8, etc. This is built directly from clusteringColumns
 
     private final Serializers serializers;
@@ -202,13 +211,10 @@ public final class CFMetaData
      * clustering key ones, those list are ordered by the "component index" of the
      * elements.
      */
-    private volatile Map<ByteBuffer, ColumnDefinition> columnMetadata = new HashMap<>();
+    private final Map<ByteBuffer, ColumnDefinition> columnMetadata = new ConcurrentHashMap<>(); // not on any hot path
     private volatile List<ColumnDefinition> partitionKeyColumns;  // Always of size keyValidator.componentsCount, null padded if necessary
     private volatile List<ColumnDefinition> clusteringColumns;    // Of size comparator.componentsCount or comparator.componentsCount -1, null padded if necessary
     private volatile PartitionColumns partitionColumns;
-
-    private final boolean isDense;
-    private final boolean isCompound;
 
     // For dense tables, this alias the single non-PK column the table contains (since it can only have one). We keep
     // that as convenience to access that column more easily (but we could replace calls by partitionColumns().iterator().next()
@@ -255,10 +261,22 @@ public final class CFMetaData
         this.cfId = cfId;
         this.ksName = keyspace;
         this.cfName = name;
+
         this.isDense = isDense;
         this.isCompound = isCompound;
         this.isSuper = isSuper;
         this.isCounter = isCounter;
+
+        EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
+        if (isSuper)
+            flags.add(Flag.SUPER);
+        if (isCounter)
+            flags.add(Flag.COUNTER);
+        if (isDense)
+            flags.add(Flag.DENSE);
+        if (isCompound)
+            flags.add(Flag.COMPOUND);
+        this.flags = Sets.immutableEnumSet(flags);
 
         // A compact table should always have a clustering
         assert isCQLTable() || !clusteringColumns.isEmpty() : String.format("For table %s.%s, isDense=%b, isCompound=%b, clustering=%s", ksName, cfName, isDense, isCompound, clusteringColumns);
@@ -317,7 +335,7 @@ public final class CFMetaData
                 case PARTITION_KEY:
                     partitions.add(column);
                     break;
-                case CLUSTERING_COLUMN:
+                case CLUSTERING:
                     clusterings.add(column);
                     break;
                 default:
@@ -347,6 +365,11 @@ public final class CFMetaData
         for (ColumnDefinition def : clusteringColumns)
             types.add(def.type);
         return types;
+    }
+
+    public Set<Flag> flags()
+    {
+        return flags;
     }
 
     /**
@@ -428,10 +451,10 @@ public final class CFMetaData
         return copyOpts(new CFMetaData(ksName,
                                        cfName,
                                        newCfId,
-                                       isSuper,
-                                       isCounter,
-                                       isDense,
-                                       isCompound,
+                                       isSuper(),
+                                       isCounter(),
+                                       isDense(),
+                                       isCompound(),
                                        copy(partitionKeyColumns),
                                        copy(clusteringColumns),
                                        copy(partitionColumns)),
@@ -497,11 +520,6 @@ public final class CFMetaData
         return comment;
     }
 
-    public boolean isSuper()
-    {
-        return isSuper;
-    }
-
     /**
      * The '.' char is the only way to identify if the CFMetadata is for a secondary index
      */
@@ -563,12 +581,12 @@ public final class CFMetaData
         return keyValidator;
     }
 
-    public Integer getMinCompactionThreshold()
+    public int getMinCompactionThreshold()
     {
         return minCompactionThreshold;
     }
 
-    public Integer getMaxCompactionThreshold()
+    public int getMaxCompactionThreshold()
     {
         return maxCompactionThreshold;
     }
@@ -729,12 +747,9 @@ public final class CFMetaData
         CFMetaData other = (CFMetaData) o;
 
         return Objects.equal(cfId, other.cfId)
+            && Objects.equal(flags, other.flags)
             && Objects.equal(ksName, other.ksName)
             && Objects.equal(cfName, other.cfName)
-            && Objects.equal(isDense, other.isDense)
-            && Objects.equal(isCompound, other.isCompound)
-            && Objects.equal(isSuper, other.isSuper)
-            && Objects.equal(isCounter, other.isCounter)
             && Objects.equal(comparator, other.comparator)
             && Objects.equal(comment, other.comment)
             && Objects.equal(readRepairChance, other.readRepairChance)
@@ -766,10 +781,7 @@ public final class CFMetaData
             .append(cfId)
             .append(ksName)
             .append(cfName)
-            .append(isDense)
-            .append(isCompound)
-            .append(isSuper)
-            .append(isCounter)
+            .append(flags)
             .append(comparator)
             .append(comment)
             .append(readRepairChance)
@@ -873,7 +885,7 @@ public final class CFMetaData
             throw new ConfigurationException(String.format("Column family ID mismatch (found %s; expected %s)",
                                                            cfm.cfId, cfId));
 
-        if (cfm.isDense != isDense || cfm.isCompound != isCompound || cfm.isCounter != isCounter || cfm.isSuper != isSuper)
+        if (!cfm.flags.equals(flags))
             throw new ConfigurationException("types do not match.");
 
         if (!cfm.comparator.isCompatibleWith(comparator))
@@ -1038,7 +1050,7 @@ public final class CFMetaData
             throw new ConfigurationException("CounterColumnType is not a valid key validator");
 
         // Mixing counter with non counter columns is not supported (#2614)
-        if (isCounter)
+        if (isCounter())
         {
             for (ColumnDefinition def : partitionColumns())
                 if (!(def.type instanceof CounterColumnType) && !CompactTables.isSuperColumnMapColumn(def))
@@ -1062,7 +1074,7 @@ public final class CFMetaData
             }
             else
             {
-                if (isSuper)
+                if (isSuper())
                     throw new ConfigurationException("Secondary indexes are not supported on super column families");
                 if (!isIndexNameValid(c.getIndexName()))
                     throw new ConfigurationException("Illegal index name " + c.getIndexName());
@@ -1170,7 +1182,7 @@ public final class CFMetaData
                 List<AbstractType<?>> keyTypes = extractTypes(partitionKeyColumns);
                 keyValidator = keyTypes.size() == 1 ? keyTypes.get(0) : CompositeType.getInstance(keyTypes);
                 break;
-            case CLUSTERING_COLUMN:
+            case CLUSTERING:
                 clusteringColumns.set(def.position(), def);
                 comparator = new ClusteringComparator(extractTypes(clusteringColumns));
                 break;
@@ -1183,7 +1195,7 @@ public final class CFMetaData
                 builder.add(def);
                 partitionColumns = builder.build();
                 // If dense, we must have modified the compact value since that's the only one we can have.
-                if (isDense)
+                if (isDense())
                     this.compactValueColumn = def;
                 break;
         }
@@ -1219,7 +1231,7 @@ public final class CFMetaData
 
     public void recordColumnDrop(ColumnDefinition def)
     {
-        droppedColumns.put(def.name.bytes, new DroppedColumn(def.type, FBUtilities.timestampMicros()));
+        droppedColumns.put(def.name.bytes, new DroppedColumn(def.name.toString(), def.type, FBUtilities.timestampMicros()));
     }
 
     public void renameColumn(ColumnIdentifier from, ColumnIdentifier to) throws InvalidRequestException
@@ -1263,23 +1275,7 @@ public final class CFMetaData
 
     public boolean isStaticCompactTable()
     {
-        return !isSuper && !isDense() && !isCompound();
-    }
-
-    private static <T> boolean hasNoNulls(List<T> l)
-    {
-        for (T t : l)
-            if (t == null)
-                return false;
-        return true;
-    }
-
-    private static <T> List<T> nullInitializedList(int size)
-    {
-        List<T> l = new ArrayList<>(size);
-        for (int i = 0; i < size; ++i)
-            l.add(null);
-        return l;
+        return !isSuper() && !isDense() && !isCompound();
     }
 
     /**
@@ -1288,11 +1284,6 @@ public final class CFMetaData
     public boolean isThriftCompatible()
     {
         return isCompactTable();
-    }
-
-    public boolean isCounter()
-    {
-        return isCounter;
     }
 
     public boolean hasStaticColumns()
@@ -1314,6 +1305,24 @@ public final class CFMetaData
             if (def.isComplex())
                 return true;
         return false;
+    }
+
+    public boolean hasDroppedCollectionColumns()
+    {
+        for (DroppedColumn def : getDroppedColumns().values())
+            if (def.type instanceof CollectionType && def.type.isMultiCell())
+                return true;
+        return false;
+    }
+
+    public boolean isSuper()
+    {
+        return isSuper;
+    }
+
+    public boolean isCounter()
+    {
+        return isCounter;
     }
 
     // We call dense a CF for which each component of the comparator is a clustering column, i.e. no
@@ -1348,10 +1357,7 @@ public final class CFMetaData
             .append("cfId", cfId)
             .append("ksName", ksName)
             .append("cfName", cfName)
-            .append("isDense", isDense)
-            .append("isCompound", isCompound)
-            .append("isSuper", isSuper)
-            .append("isCounter", isCounter)
+            .append("flags", flags)
             .append("comparator", comparator)
             .append("partitionColumns", partitionColumns)
             .append("partitionKeyColumns", partitionKeyColumns)
@@ -1519,7 +1525,7 @@ public final class CFMetaData
             for (int i = 0; i < clusteringColumns.size(); i++)
             {
                 Pair<ColumnIdentifier, AbstractType> p = clusteringColumns.get(i);
-                clusterings.add(new ColumnDefinition(keyspace, table, p.left, p.right, i, ColumnDefinition.Kind.CLUSTERING_COLUMN));
+                clusterings.add(new ColumnDefinition(keyspace, table, p.left, p.right, i, ColumnDefinition.Kind.CLUSTERING));
             }
 
             for (int i = 0; i < regularColumns.size(); i++)
@@ -1547,23 +1553,16 @@ public final class CFMetaData
         }
     }
 
-    // We don't use UUIDSerializer below because we want to use this with vint-encoded streams and UUIDSerializer
-    // currently assumes a NATIVE encoding. This is also why we don't use writeLong()/readLong in the methods below:
-    // this would encode the values, but by design of UUID it is likely that both long will be very big numbers
-    // and so we have a fair change that the encoding will take more than 16 bytes which is not desirable. Note that
-    // we could make UUIDSerializer work as the serializer below, but I'll keep that to later.
     public static class Serializer
     {
         public void serialize(CFMetaData metadata, DataOutputPlus out, int version) throws IOException
         {
-            // for some reason these are stored is LITTLE_ENDIAN; so just reverse them
-            out.writeLong(Long.reverseBytes(metadata.cfId.getMostSignificantBits()));
-            out.writeLong(Long.reverseBytes(metadata.cfId.getLeastSignificantBits()));
+            UUIDSerializer.serializer.serialize(metadata.cfId, out, version);
         }
 
-        public CFMetaData deserialize(DataInput in, int version) throws IOException
+        public CFMetaData deserialize(DataInputPlus in, int version) throws IOException
         {
-            UUID cfId = new UUID(Long.reverseBytes(in.readLong()), Long.reverseBytes(in.readLong()));
+            UUID cfId = UUIDSerializer.serializer.deserialize(in, version);
             CFMetaData metadata = Schema.instance.getCFMetaData(cfId);
             if (metadata == null)
             {
@@ -1578,20 +1577,54 @@ public final class CFMetaData
 
         public long serializedSize(CFMetaData metadata, int version)
         {
-            // We've made sure it was encoded as 16 bytes whatever the TypeSizes is.
-            return 16;
+            return UUIDSerializer.serializer.serializedSize(metadata.cfId, version);
         }
     }
 
     public static class DroppedColumn
     {
+        // we only allow dropping REGULAR columns, from CQL-native tables, so the names are always of UTF8Type
+        public final String name;
         public final AbstractType<?> type;
+
+        // drop timestamp, in microseconds, yet with millisecond granularity
         public final long droppedTime;
 
-        public DroppedColumn(AbstractType<?> type, long droppedTime)
+        public DroppedColumn(String name, AbstractType<?> type, long droppedTime)
         {
+            this.name = name;
             this.type = type;
             this.droppedTime = droppedTime;
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (this == o)
+                return true;
+
+            if (!(o instanceof DroppedColumn))
+                return false;
+
+            DroppedColumn dc = (DroppedColumn) o;
+
+            return name.equals(dc.name) && type.equals(dc.type) && droppedTime == dc.droppedTime;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hashCode(name, type, droppedTime);
+        }
+
+        @Override
+        public String toString()
+        {
+            return MoreObjects.toStringHelper(this)
+                              .add("name", name)
+                              .add("type", type)
+                              .add("droppedTime", droppedTime)
+                              .toString();
         }
     }
 }

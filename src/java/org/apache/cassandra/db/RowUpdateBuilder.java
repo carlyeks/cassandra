@@ -18,6 +18,8 @@
 package org.apache.cassandra.db;
 
 import java.nio.ByteBuffer;
+import java.util.Map;
+import java.util.Set;
 
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.config.CFMetaData;
@@ -220,11 +222,11 @@ public class RowUpdateBuilder
         return resetCollection(c);
     }
 
-    public RowUpdateBuilder resetCollection(ColumnDefinition columnDefinition)
+    public RowUpdateBuilder resetCollection(ColumnDefinition c)
     {
-        assert columnDefinition.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + columnDefinition + " since clustering has not yet been provided";
-        assert columnDefinition.type.isCollection() && columnDefinition.type.isMultiCell();
-        writer(columnDefinition).writeComplexDeletion(columnDefinition, new SimpleDeletionTime(defaultLiveness.timestamp() - 1, deletionTime.localDeletionTime()));
+        assert c.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + c + " since no clustering has been provided";
+        assert c.type.isCollection() && c.type.isMultiCell();
+        writer(c).writeComplexDeletion(c, new SimpleDeletionTime(defaultLiveness.timestamp() - 1, deletionTime.localDeletionTime()));
         return this;
     }
 
@@ -257,7 +259,7 @@ public class RowUpdateBuilder
 
     public RowUpdateBuilder add(ColumnDefinition columnDefinition, Object value, LivenessInfo livenessInfo)
     {
-        assert columnDefinition.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + columnDefinition + " since clustering has not yet been provided";
+        assert columnDefinition.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + columnDefinition + " since no clustering has been provided";
         if (value == null)
             writer(columnDefinition).writeCell(columnDefinition, false, ByteBufferUtil.EMPTY_BYTE_BUFFER, deletionLiveness, null);
         else
@@ -296,11 +298,27 @@ public class RowUpdateBuilder
         return ((AbstractType)type).decompose(value);
     }
 
+    public RowUpdateBuilder map(String columnName, Map<?, ?> map)
+    {
+        resetCollection(columnName);
+        for (Map.Entry<?, ?> entry : map.entrySet())
+            addMapEntry(columnName, entry.getKey(), entry.getValue());
+        return this;
+    }
+
+    public RowUpdateBuilder set(String columnName, Set<?> set)
+    {
+        resetCollection(columnName);
+        for (Object element : set)
+            addSetEntry(columnName, element);
+        return this;
+    }
+
     public RowUpdateBuilder addMapEntry(String columnName, Object key, Object value)
     {
         ColumnDefinition c = getDefinition(columnName);
-        assert c.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + c + " since clustering has not yet been provided";
-        assert c.type instanceof MapType;
+        assert c.isStatic() || update.metadata().comparator.size() == 0 || hasSetClustering : "Cannot set non static column " + c + " since no clustering has been provided";
+        assert c.type instanceof MapType && c.type.isMultiCell();
         MapType mt = (MapType)c.type;
         writer(c).writeCell(c, false, bb(value, mt.getValuesType()), defaultLiveness, CellPath.create(bb(key, mt.getKeysType())));
         return this;
@@ -309,8 +327,8 @@ public class RowUpdateBuilder
     public RowUpdateBuilder addListEntry(String columnName, Object value)
     {
         ColumnDefinition c = getDefinition(columnName);
-        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since clustering has not yet been provided";
-        assert c.type instanceof ListType;
+        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since no clustering has been provided";
+        assert c.type instanceof ListType && c.type.isMultiCell();
         ListType lt = (ListType)c.type;
         writer(c).writeCell(c, false, bb(value, lt.getElementsType()), defaultLiveness, CellPath.create(ByteBuffer.wrap(UUIDGen.getTimeUUIDBytes())));
         return this;
@@ -319,10 +337,10 @@ public class RowUpdateBuilder
     public RowUpdateBuilder addSetEntry(String columnName, Object value)
     {
         ColumnDefinition c = getDefinition(columnName);
-        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since clustering has not yet been provided";
-        assert c.type instanceof SetType;
+        assert c.isStatic() || hasSetClustering : "Cannot set non static column " + c + " since no clustering has been provided";
+        assert c.type instanceof SetType && c.type.isMultiCell();
         SetType st = (SetType)c.type;
-        writer(c).writeCell(c, false, null, defaultLiveness, CellPath.create(bb(value, st.getElementsType())));
+        writer(c).writeCell(c, false, ByteBufferUtil.EMPTY_BYTE_BUFFER, defaultLiveness, CellPath.create(bb(value, st.getElementsType())));
         return this;
     }
 

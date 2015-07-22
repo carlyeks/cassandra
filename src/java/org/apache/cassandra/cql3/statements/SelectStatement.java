@@ -633,7 +633,7 @@ public class SelectStatement implements CQLStatement
                     case PARTITION_KEY:
                         result.add(keyComponents[def.position()]);
                         break;
-                    case CLUSTERING_COLUMN:
+                    case CLUSTERING:
                         result.add(row.clustering().get(def.position()));
                         break;
                     case REGULAR:
@@ -942,7 +942,8 @@ public class SelectStatement implements CQLStatement
 
     public static class Parameters
     {
-        private final Map<ColumnIdentifier.Raw, Boolean> orderings;
+        // Public because CASSANDRA-9858
+        public final Map<ColumnIdentifier.Raw, Boolean> orderings;
         public final boolean isDistinct;
         public final boolean allowFiltering;
         public final boolean isJson;
