@@ -267,18 +267,16 @@ public class MaterializedView
     /**
      * @return Mutation which is the transformed base table mutation for the materialized view.
      */
-    private Mutation createMutationsForInserts(TemporalRow temporalRow, long timestamp, boolean tombstonesGenerated)
+    private Mutation createMutationsForInserts(TemporalRow temporalRow, long timestamp)
     {
-        DecoratedKey partitionKey = targetPartitionKey(temporalRow, TemporalRow.latest);
+        TemporalRow.Resolver resolver = TemporalRow.latest;
+
+        DecoratedKey partitionKey = targetPartitionKey(temporalRow, resolver);
         if (partitionKey == null)
         {
             // Not having a partition key means we aren't updating anything
             return null;
         }
-
-        TemporalRow.Resolver resolver = tombstonesGenerated
-                                         ? TemporalRow.latest
-                                         : TemporalRow.newValueIfUpdated;
 
         RowUpdateBuilder builder = new RowUpdateBuilder(viewCfs.metadata, timestamp, temporalRow.ttl, partitionKey);
         int nowInSec = FBUtilities.nowInSeconds();
@@ -493,22 +491,19 @@ public class MaterializedView
         Collection<Mutation> mutations = null;
         for (TemporalRow temporalRow : rowSet)
         {
-            boolean tombstonesInserted = false;
-
             // If we are building, there is no need to check for partition tombstones; those values will not be present
             // in the partition data
             if (!isBuilding)
             {
                 Mutation partitionTombstone = createPartitionTombstonesForUpdates(temporalRow, upd.maxTimestamp());
-                tombstonesInserted = partitionTombstone != null;
-                if (tombstonesInserted)
+                if (partitionTombstone != null)
                 {
                     if (mutations == null) mutations = new LinkedList<>();
                     mutations.add(partitionTombstone);
                 }
             }
 
-            Mutation insert = createMutationsForInserts(temporalRow, upd.maxTimestamp(), tombstonesInserted);
+            Mutation insert = createMutationsForInserts(temporalRow, upd.maxTimestamp());
             if (insert != null)
             {
                 if (mutations == null) mutations = new LinkedList<>();

@@ -51,79 +51,77 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
- * Represents a single CQL Row in a base table, with both the currently persisted value and the value it will be updated
- * to. The values are stored in both
+ * Represents a single CQL Row in a base table, with both the currently persisted value and the update's value. The
+ * values are stored in timestamp order, but also indicate whether they are from the currently persisted, allowing a
+ * {@link TemporalRow.Resolver} to resolve if the value is an old value that has been updated; if it sorts after the
+ * update's value, then it does not qualify.
  */
 public class TemporalRow
 {
     public interface Resolver
     {
+        /**
+         * @param cells Iterable of all cells for a certain TemporalRow's Cell, in timestamp sorted order
+         * @return      A single TemporalCell from the iterable which satisfies the resolution criteria, or null if
+         *              there is no cell which qualifies
+         */
         TemporalCell resolve(Iterable<TemporalCell> cells);
     }
 
-    public static final Resolver oldValueIfUpdated = new Resolver()
-    {
-        public TemporalCell resolve(Iterable<TemporalCell> cells)
-        {
-            Iterator<TemporalCell> iterator = cells.iterator();
-            if (!iterator.hasNext())
-                return null;
+    /**
+     * Returns the first value in the iterable if it is from the set of persisted cells, and the cell which results from
+     * reconciliation of the remaining cells does not have the same value.
+     */
+    public static final Resolver oldValueIfUpdated = cells -> {
+        Iterator<TemporalCell> iterator = cells.iterator();
+        if (!iterator.hasNext())
+            return null;
 
-            TemporalCell initial = iterator.next();
-            if (initial.isNew || !iterator.hasNext())
-                return null;
+        TemporalCell initial = iterator.next();
+        if (initial.isNew || !iterator.hasNext())
+            return null;
 
-            TemporalCell value = initial;
-            while (iterator.hasNext())
-                value = value.reconcile(iterator.next());
+        TemporalCell value = initial;
+        while (iterator.hasNext())
+            value = value.reconcile(iterator.next());
 
-            return ByteBufferUtil.compareUnsigned(initial.value, value.value) != 0 ? initial : null;
-        }
+        return ByteBufferUtil.compareUnsigned(initial.value, value.value) != 0 ? initial : null;
     };
 
-    public static final Resolver newValueIfUpdated = new Resolver()
-    {
-        public TemporalCell resolve(Iterable<TemporalCell> cells)
-        {
-            Iterator<TemporalCell> iterator = cells.iterator();
-            if (!iterator.hasNext())
-                return null;
-            TemporalCell initial = iterator.next();
-            if (!iterator.hasNext())
-                return initial;
+    /**
+     * Returns the lastest value if it does not match
+     */
+    public static final Resolver newValueIfUpdated = cells -> {
+        Iterator<TemporalCell> iterator = cells.iterator();
+        if (!iterator.hasNext())
+            return null;
+        TemporalCell initial = iterator.next();
+        if (!iterator.hasNext())
+            return initial;
 
-            TemporalCell value = initial;
-            while (iterator.hasNext())
-                value = value.reconcile(iterator.next());
+        TemporalCell value = initial;
+        while (iterator.hasNext())
+            value = value.reconcile(iterator.next());
 
-            return value.isNew ? value : null;
-        }
+        return value.isNew && ByteBufferUtil.compareUnsigned(initial.value, value.value) != 0 ? value : null;
     };
 
-    public static final Resolver earliest = new Resolver()
-    {
-        public TemporalCell resolve(Iterable<TemporalCell> cells)
-        {
-            Iterator<TemporalCell> iterator = cells.iterator();
-            if (!iterator.hasNext())
-                return null;
-            return iterator.next();
-        }
+    public static final Resolver earliest = cells -> {
+        Iterator<TemporalCell> iterator = cells.iterator();
+        if (!iterator.hasNext())
+            return null;
+        return iterator.next();
     };
 
-    public static final Resolver latest = new Resolver()
-    {
-        public TemporalCell resolve(Iterable<TemporalCell> cells)
-        {
-            Iterator<TemporalCell> iterator = cells.iterator();
-            if (!iterator.hasNext())
-                return null;
-            TemporalCell value = iterator.next();
-            while (iterator.hasNext())
-                value = value.reconcile(iterator.next());
+    public static final Resolver latest = cells -> {
+        Iterator<TemporalCell> iterator = cells.iterator();
+        if (!iterator.hasNext())
+            return null;
+        TemporalCell value = iterator.next();
+        while (iterator.hasNext())
+            value = value.reconcile(iterator.next());
 
-            return value;
-        }
+        return value;
     };
 
     private static class TemporalCell
