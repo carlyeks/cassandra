@@ -955,8 +955,8 @@ public class MaterializedViewTest extends CQLTester
 
         Thread.sleep(TimeUnit.SECONDS.toMillis(3));
         List<Row> results = executeNet(protocolVersion, "SELECT d FROM " + keyspace() + ".mv WHERE c = 2 AND a = 1 AND b = 1").all();
-        assert results.size() == 1;
-        assert results.get(0).isNull(0);
+        Assert.assertEquals(1, results.size());
+        Assert.assertTrue("There should be a null result given back due to ttl expiry", results.get(0).isNull(0));
 
         dropTable("DROP MATERIALIZED VIEW " + keyspace() + ".mv");
     }

@@ -151,10 +151,9 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     }
                 }
 
-                Integer componentIndex = cfm.isCompound() ? cfm.comparator.size() : null;
                 cfm.addColumnDefinition(isStatic
-                                        ? ColumnDefinition.staticDef(cfm, columnName.bytes, type, componentIndex)
-                                        : ColumnDefinition.regularDef(cfm, columnName.bytes, type, componentIndex));
+                                        ? ColumnDefinition.staticDef(cfm, columnName.bytes, type)
+                                        : ColumnDefinition.regularDef(cfm, columnName.bytes, type));
 
                 // Adding a column to a table which has an include all materialized view requires the column to be added
                 // to the materialized view as well
@@ -163,10 +162,9 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     if (mv.includeAll)
                     {
                         CFMetaData indexCfm = Schema.instance.getCFMetaData(keyspace(), mv.viewName).copy();
-                        componentIndex = indexCfm.isCompound() ? indexCfm.comparator.size() : null;
                         indexCfm.addColumnDefinition(isStatic
-                                                     ? ColumnDefinition.staticDef(indexCfm, columnName.bytes, type, componentIndex)
-                                                     : ColumnDefinition.regularDef(indexCfm, columnName.bytes, type, componentIndex));
+                                                     ? ColumnDefinition.staticDef(indexCfm, columnName.bytes, type)
+                                                     : ColumnDefinition.regularDef(indexCfm, columnName.bytes, type));
                         if (materializedViewUpdates == null)
                             materializedViewUpdates = new ArrayList<>();
                         materializedViewUpdates.add(indexCfm);

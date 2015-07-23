@@ -19,7 +19,6 @@
 package org.apache.cassandra.db.view;
 
 import java.nio.ByteBuffer;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -41,9 +40,12 @@ import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Conflicts;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionInfo;
+import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.LivenessInfo;
+import org.apache.cassandra.db.RangeTombstone;
 import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.marshal.CompositeType;
+import org.apache.cassandra.db.rows.BufferCell;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.rows.CellPath;
 import org.apache.cassandra.db.rows.Row;
@@ -58,6 +60,10 @@ import org.apache.cassandra.utils.FBUtilities;
  */
 public class TemporalRow
 {
+    private static final int NO_TTL = LivenessInfo.NO_TTL;
+    private static final long NO_TIMESTAMP = LivenessInfo.NO_TIMESTAMP;
+    private static final int NO_DELETION_TIME = DeletionTime.LIVE.localDeletionTime();
+
     public interface Resolver
     {
         /**
@@ -127,26 +133,30 @@ public class TemporalRow
     private static class TemporalCell
     {
         public final ByteBuffer value;
-        public final LivenessInfo liveness;
+        public final long timestamp;
+        public final int ttl;
+        public final int localDeletionTime;
         public final boolean isNew;
 
-        private TemporalCell(ByteBuffer value, LivenessInfo liveness, boolean isNew)
+        private TemporalCell(ByteBuffer value, long timestamp, int ttl, int localDeletionTime, boolean isNew)
         {
             this.value = value;
-            this.liveness = liveness;
+            this.timestamp = timestamp;
+            this.ttl = ttl;
+            this.localDeletionTime = localDeletionTime;
             this.isNew = isNew;
         }
 
         public TemporalCell reconcile(TemporalCell that)
         {
             int now = FBUtilities.nowInSeconds();
-            Conflicts.Resolution resolution = Conflicts.resolveRegular(that.liveness.timestamp(),
-                                                                       that.liveness.isLive(now),
-                                                                       that.liveness.localDeletionTime(),
+            Conflicts.Resolution resolution = Conflicts.resolveRegular(that.timestamp,
+                                                                       that.isLive(now),
+                                                                       that.localDeletionTime,
                                                                        that.value,
-                                                                       this.liveness.timestamp(),
-                                                                       this.liveness.isLive(now),
-                                                                       this.liveness.localDeletionTime(),
+                                                                       this.timestamp,
+                                                                       this.isLive(now),
+                                                                       this.localDeletionTime,
                                                                        this.value);
             assert resolution != Conflicts.Resolution.MERGE;
             if (resolution == Conflicts.Resolution.LEFT_WINS)
@@ -154,92 +164,38 @@ public class TemporalRow
             return this;
         }
 
+        private boolean isLive(int now)
+        {
+            return localDeletionTime == NO_DELETION_TIME || (ttl != NO_TTL && now < localDeletionTime);
+        }
+
         public Cell cell(ColumnDefinition definition, CellPath cellPath, long newTimeStamp)
         {
-            final LivenessInfo liveness = this.isNew ? this.liveness.withUpdatedTimestamp(newTimeStamp)
-                                                : this.liveness.withUpdatedTimestamp(newTimeStamp - 1);
-
-            return new org.apache.cassandra.db.rows.Cell()
-            {
-                public ColumnDefinition column()
-                {
-                    return definition;
-                }
-
-                public boolean isCounterCell()
-                {
-                    return false;
-                }
-
-                public ByteBuffer value()
-                {
-                    return TemporalCell.this.value;
-                }
-
-                public LivenessInfo livenessInfo()
-                {
-                    return liveness;
-                }
-
-                public boolean isTombstone()
-                {
-                    return livenessInfo().hasLocalDeletionTime() && !livenessInfo().hasTTL();
-                }
-
-                public boolean isExpiring()
-                {
-                    return livenessInfo().hasTTL();
-                }
-
-                public boolean isLive(int nowInSec)
-                {
-                    return liveness.isLive(nowInSec);
-                }
-
-                public CellPath path()
-                {
-                    return cellPath;
-                }
-
-                public void writeTo(Row.Writer writer)
-                {
-
-                }
-
-                public void digest(MessageDigest digest)
-                {
-
-                }
-
-                public void validate()
-                {
-
-                }
-
-                public int dataSize()
-                {
-                    return TemporalCell.this.value.remaining();
-                }
-
-                public org.apache.cassandra.db.rows.Cell takeAlias()
-                {
-                    return this;
-                }
-            };
+            return new BufferCell(definition, isNew ? newTimeStamp : newTimeStamp - 1, ttl, localDeletionTime, value, cellPath);
         }
     }
 
-    final ColumnFamilyStore baseCfs;
+    private final ColumnFamilyStore baseCfs;
+    private final java.util.Set<ColumnIdentifier> viewPrimaryKey;
     private final ByteBuffer basePartitionKey;
     public final Map<ColumnIdentifier, ByteBuffer> clusteringColumns;
+    public final int nowInSec;
     private final Map<ColumnIdentifier, Map<CellPath, SortedMap<Long, TemporalCell>>> columnValues = new HashMap<>();
-    public int ttl;
+    private int viewClusteringTtl = NO_TTL;
+    private long viewClusteringTimestamp = NO_TIMESTAMP;
+    private int viewClusteringLocalDeletionTime = NO_DELETION_TIME;
 
-    TemporalRow(ColumnFamilyStore baseCfs, ByteBuffer key, Row row, boolean isNew)
+    TemporalRow(ColumnFamilyStore baseCfs, java.util.Set<ColumnIdentifier> viewPrimaryKey, ByteBuffer key, Row row, int nowInSec, boolean isNew)
     {
         this.baseCfs = baseCfs;
+        this.viewPrimaryKey = viewPrimaryKey;
         this.basePartitionKey = key;
+        this.nowInSec = nowInSec;
         clusteringColumns = new HashMap<>();
+        LivenessInfo liveness = row.primaryKeyLivenessInfo();
+        this.viewClusteringLocalDeletionTime = minValueIfSet(viewClusteringLocalDeletionTime, row.deletion().localDeletionTime(), NO_DELETION_TIME);
+        this.viewClusteringTimestamp = minValueIfSet(viewClusteringTimestamp, liveness.timestamp(), NO_TIMESTAMP);
+        this.viewClusteringTtl = minValueIfSet(viewClusteringTtl, liveness.ttl(), NO_TTL);
 
         List<ColumnDefinition> clusteringDefs = baseCfs.metadata.clusteringColumns();
         for (int i = 0; i < clusteringDefs.size(); i++)
@@ -247,7 +203,7 @@ public class TemporalRow
             ColumnDefinition cdef = clusteringDefs.get(i);
             clusteringColumns.put(cdef.name, row.clustering().get(i));
 
-            addColumnValue(cdef.name, null, row.primaryKeyLivenessInfo(), row.clustering().get(i), isNew);
+            addColumnValue(cdef.name, null, NO_TIMESTAMP, NO_TTL, NO_DELETION_TIME, row.clustering().get(i), isNew);
         }
     }
 
@@ -273,7 +229,12 @@ public class TemporalRow
         return result;
     }
 
-    public void addColumnValue(ColumnIdentifier identifier, CellPath cellPath, LivenessInfo liveness, ByteBuffer value,  boolean isNew)
+    public void addColumnValue(ColumnIdentifier identifier,
+                               CellPath cellPath,
+                               long timestamp,
+                               int ttl,
+                               int localDeletionTime,
+                               ByteBuffer value,  boolean isNew)
     {
         if (!columnValues.containsKey(identifier))
             columnValues.put(identifier, new HashMap<>());
@@ -283,15 +244,53 @@ public class TemporalRow
         if (!innerMap.containsKey(cellPath))
             innerMap.put(cellPath, new TreeMap<>());
 
-        if (liveness.hasTTL())
-            ttl = Math.max(liveness.ttl(), ttl);
+        // If this column is part of the view's primary keys
+        if (viewPrimaryKey.contains(identifier))
+        {
+            this.viewClusteringTtl = minValueIfSet(this.viewClusteringTtl, ttl, NO_TTL);
+            this.viewClusteringTimestamp = minValueIfSet(this.viewClusteringTimestamp, timestamp, NO_TIMESTAMP);
+            this.viewClusteringLocalDeletionTime = minValueIfSet(this.viewClusteringLocalDeletionTime, localDeletionTime, NO_DELETION_TIME);
+        }
 
-        innerMap.get(cellPath).put(liveness.timestamp(), new TemporalCell(value, liveness, isNew));
+        innerMap.get(cellPath).put(timestamp, new TemporalCell(value, NO_TIMESTAMP, NO_TTL, NO_DELETION_TIME, isNew));
     }
 
-    public void addColumnValue(org.apache.cassandra.db.rows.Cell cell, boolean isNew)
+    private static int minValueIfSet(int existing, int update, int defaultValue)
     {
-        addColumnValue(cell.column().name, cell.path(), cell.livenessInfo(), cell.value(), isNew);
+        if (existing == defaultValue)
+            return update;
+        if (update == defaultValue)
+            return existing;
+        return Math.min(existing, update);
+    }
+
+    private static long minValueIfSet(long existing, long update, long defaultValue)
+    {
+        if (existing == defaultValue)
+            return update;
+        if (update == defaultValue)
+            return existing;
+        return Math.min(existing, update);
+    }
+
+    public int viewClusteringTtl()
+    {
+        return viewClusteringTtl;
+    }
+
+    public long viewClusteringTimestamp()
+    {
+        return viewClusteringTimestamp;
+    }
+
+    public int viewClusteringLocalDeletionTime()
+    {
+        return viewClusteringLocalDeletionTime;
+    }
+
+    public void addCell(Cell cell, boolean isNew)
+    {
+        addColumnValue(cell.column().name, cell.path(), cell.timestamp(), cell.ttl(), cell.localDeletionTime(), cell.value(), isNew);
     }
 
     // The Definition here is actually the *base table* definition
@@ -326,29 +325,17 @@ public class TemporalRow
         return null;
     }
 
-    public boolean isLive(DeletionInfo deletionInfo, Resolver resolver)
+    public DeletionTime deletionTime(DeletionInfo deletionInfo)
     {
         if (deletionInfo.isLive())
-            return true;
+            return DeletionTime.LIVE;
+
+        if (!deletionInfo.getPartitionDeletion().isLive())
+            return deletionInfo.getPartitionDeletion();
 
         Clustering baseClustering = baseClusteringBuilder().build();
-
-        for (Map.Entry<ColumnIdentifier, Map<CellPath, SortedMap<Long, TemporalCell>>> innerMap : columnValues.entrySet())
-        {
-            ColumnIdentifier identifier = innerMap.getKey();
-            ColumnDefinition definition = baseCfs.metadata.getColumnDefinition(identifier);
-            for (Map.Entry<CellPath, SortedMap<Long, TemporalCell>> complexCells : innerMap.getValue().entrySet())
-            {
-                CellPath path = complexCells.getKey();
-                TemporalCell cell = resolver.resolve(complexCells.getValue().values());
-                if (deletionInfo.isDeleted(baseClustering, cell.cell(definition, path, cell.liveness.timestamp())))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
+        RangeTombstone clusterTombstone = deletionInfo.rangeCovering(baseClustering);
+        return clusterTombstone == null ? DeletionTime.LIVE : clusterTombstone.deletionTime();
     }
 
     public Collection<org.apache.cassandra.db.rows.Cell> values(ColumnDefinition definition, Resolver resolver, final long newTimeStamp)
@@ -394,13 +381,16 @@ public class TemporalRow
     static class Set implements Iterable<TemporalRow>
     {
         private final ColumnFamilyStore baseCfs;
+        private final java.util.Set<ColumnIdentifier> viewPrimaryKey;
         private final ByteBuffer key;
         public final DecoratedKey dk;
         private final Map<Clustering, TemporalRow> clusteringToRow;
+        private final int nowInSec = FBUtilities.nowInSeconds();
 
-        Set(ColumnFamilyStore baseCfs, ByteBuffer key)
+        Set(ColumnFamilyStore baseCfs, java.util.Set<ColumnIdentifier> viewPrimaryKey, ByteBuffer key)
         {
             this.baseCfs = baseCfs;
+            this.viewPrimaryKey = viewPrimaryKey;
             this.key = key;
             this.dk = baseCfs.partitioner.decorateKey(key);
             this.clusteringToRow = new HashMap<>();
@@ -421,13 +411,13 @@ public class TemporalRow
             TemporalRow temporalRow = clusteringToRow.get(row.clustering());
             if (temporalRow == null)
             {
-                temporalRow = new TemporalRow(baseCfs, key, row, isNew);
+                temporalRow = new TemporalRow(baseCfs, viewPrimaryKey, key, row, nowInSec, isNew);
                 clusteringToRow.put(row.clustering(), temporalRow);
             }
 
-            for (org.apache.cassandra.db.rows.Cell aRow : row)
+            for (Cell cell: row.cells())
             {
-                temporalRow.addColumnValue(aRow, isNew);
+                temporalRow.addCell(cell, isNew);
             }
         }
 
