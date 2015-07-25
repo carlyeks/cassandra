@@ -209,7 +209,7 @@ JVM_OPTS="$JVM_OPTS -XX:StringTableSize=1000003"
 JVM_OPTS="$JVM_OPTS -XX:+UseTLAB -XX:+ResizeTLAB"
 
 # http://www.evanjones.ca/jvm-mmap-pause.html
-JVM_OPTS="$JVM_OPTS -XX:+PerfDisableSharedMem"
+#JVM_OPTS="$JVM_OPTS -XX:+PerfDisableSharedMem"
 
 # provides hints to the JIT compiler
 JVM_OPTS="$JVM_OPTS -XX:CompileCommandFile=$CASSANDRA_CONF/hotspot_compiler"

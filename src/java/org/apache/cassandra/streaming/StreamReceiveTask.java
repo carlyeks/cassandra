@@ -24,12 +24,22 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.db.compaction.OperationType;
+import org.apache.cassandra.db.Mutation;
+import org.apache.cassandra.db.partitions.PartitionUpdate;
+import org.apache.cassandra.db.rows.RowIterators;
+import org.apache.cassandra.db.rows.Unfiltered;
+import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import org.apache.cassandra.db.rows.UnfilteredRowIterators;
+import org.apache.cassandra.io.sstable.ISSTableScanner;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
 import org.apache.cassandra.utils.Pair;
@@ -41,6 +51,8 @@ import org.apache.cassandra.utils.concurrent.Refs;
  */
 public class StreamReceiveTask extends StreamTask
 {
+    private static final Logger logger = LoggerFactory.getLogger(StreamReceiveTask.class);
+
     private static final ExecutorService executor = Executors.newCachedThreadPool(new NamedThreadFactory("StreamReceiveTask"));
 
     // number of files to receive
@@ -127,13 +139,49 @@ public class StreamReceiveTask extends StreamTask
             task.txn.finish();
             task.sstables.clear();
 
+
+
             try (Refs<SSTableReader> refs = Refs.ref(readers))
             {
-                // add sstables and build secondary indexes
-                cfs.addSSTables(readers);
-                cfs.indexManager.maybeBuildSecondaryIndexes(readers, cfs.indexManager.allIndexesNames());
+                //We have a special path for Materialized view.
+                //Since the MV requires cleaning up any pre-existing state, we must put
+                //All partitions through the same write path as normal mutations.
+                if (cfs.materializedViewManager.allViews().iterator().hasNext())
+                {
+                    logger.info("Streamed data affects a Materialized View, mutating each partition");
+
+                    for (SSTableReader reader : readers)
+                    {
+
+                        try(ISSTableScanner scanner = reader.getScanner())
+                        {
+                            while (scanner.hasNext())
+                            {
+                                logger.info("Writing mutation");
+                                try (UnfilteredRowIterator rowIterator = scanner.next())
+                                {
+                                    new Mutation(UnfilteredRowIterators.toUpdate(rowIterator)).apply();
+                                }
+
+                                logger.info("Wrote mutation");
+                            }
+                        }
+                    }
+                }
+                else
+                {
+
+                    // add sstables and build secondary indexes
+                    cfs.addSSTables(readers);
+                    cfs.indexManager.maybeBuildSecondaryIndexes(readers, cfs.indexManager.allIndexesNames());
+                }
+            }catch (Throwable t)
+            {
+                logger.error("Error !", t);
             }
 
+
+            logger.info("Finished task");
             task.session.taskCompleted(task);
         }
     }

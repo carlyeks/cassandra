@@ -150,7 +150,7 @@ public class MaterializedViewManager
      * Calculates and pushes updates to the views replicas. The replicas are determined by
      * {@link MaterializedViewUtils#getViewNaturalEndpoint(String, Token, Token)}.
      */
-    public void pushReplicaUpdates(ByteBuffer key, PartitionUpdate update) throws UnavailableException, OverloadedException, WriteTimeoutException
+    public void pushViewReplicaUpdates(ByteBuffer key, PartitionUpdate update) throws UnavailableException, OverloadedException, WriteTimeoutException
     {
         // This happens when we are replaying from commitlog. In that case, we have already sent this commit off to the
         // view node.
@@ -193,15 +193,12 @@ public class MaterializedViewManager
         return null;
     }
 
-    public static boolean updatesAffectView(Collection<? extends IMutation> mutations, boolean ignoreRf1)
+    public static boolean updatesAffectView(Collection<? extends IMutation> mutations)
     {
         for (IMutation mutation : mutations)
         {
             for (PartitionUpdate cf : mutation.getPartitionUpdates())
             {
-                if (ignoreRf1 && Keyspace.open(cf.metadata().ksName).getReplicationStrategy().getReplicationFactor() == 1)
-                    continue;
-
                 MaterializedViewManager viewManager = Keyspace.open(cf.metadata().ksName)
                                                               .getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
                 if (viewManager.updateAffectsView(cf))

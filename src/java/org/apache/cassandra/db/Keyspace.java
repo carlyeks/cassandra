@@ -26,7 +26,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.locks.Lock;
 
 import com.google.common.base.Function;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,7 +45,6 @@ import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.schema.KeyspaceMetadata;
-import org.apache.cassandra.schema.SchemaKeyspace;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -396,7 +394,9 @@ public class Keyspace
             throw new RuntimeException("Testing write failures");
 
         Lock lock = null;
-        if (updateIndexes && MaterializedViewManager.updatesAffectView(Collections.singleton(mutation), false))
+        boolean requiresViewUpdate = updateIndexes && MaterializedViewManager.updatesAffectView(Collections.singleton(mutation));
+
+        if (requiresViewUpdate)
         {
             lock = MaterializedViewManager.acquireLockFor(mutation.key().getKey());
 
@@ -410,18 +410,15 @@ public class Keyspace
                 }
                 else
                 {
-                    StageManager.getStage(Stage.MUTATION).execute(new Runnable()
-                    {
-                        public void run()
-                        {
-                            if (writeCommitLog)
-                                mutation.apply();
-                            else
-                                mutation.applyUnsafe();
-                        }
+                    //This MV update can't happen right now. so rather than take up
+                    //the thread we will re-apply ourself to the queue and try again
+                    StageManager.getStage(Stage.MUTATION).execute(() -> {
+                        if (writeCommitLog)
+                            mutation.apply();
+                        else
+                            mutation.applyUnsafe();
                     });
 
-                    //Let someone else go
                     return;
                 }
             }
@@ -446,20 +443,20 @@ public class Keyspace
                     continue;
                 }
 
-                try
+                if (requiresViewUpdate)
                 {
-                    if (updateIndexes && cfs.materializedViewManager.updateAffectsView(upd))
+                    try
                     {
                         Tracing.trace("Create materialized view mutations from replica");
                         cfs.materializedViewManager.pushReplicaUpdates(upd.partitionKey().getKey(), upd);
                     }
-                }
-                catch (Exception e)
-                {
-                    if ( !(e instanceof WriteTimeoutException))
-                        logger.warn("Encountered exception when creating materialized view mutations", e);
+                    catch (Exception e)
+                    {
+                        if (!(e instanceof WriteTimeoutException))
+                            logger.warn("Encountered exception when creating materialized view mutations", e);
 
-                    JVMStabilityInspector.inspectThrowable(e);
+                        JVMStabilityInspector.inspectThrowable(e);
+                    }
                 }
 
                 Tracing.trace("Adding to {} memtable", upd.metadata().cfName);

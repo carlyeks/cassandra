@@ -344,7 +344,6 @@ public class TemporalRow
         Map<CellPath, SortedMap<Long, TemporalCell>> innerMap = columnValues.get(definition.name);
         if (innerMap == null)
         {
-
             return Collections.emptyList();
         }
 
