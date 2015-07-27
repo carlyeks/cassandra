@@ -74,7 +74,10 @@ public class Keyspace
     }
 
     private volatile KeyspaceMetadata metadata;
-    public final OpOrder writeOrder = new OpOrder();
+
+    //OpOrder is defined globally since we need to order writes across
+    //Keyspaces in the case of MaterializedViews (batchlog of MV mutations)
+    public static final OpOrder writeOrder = new OpOrder();
 
     /* ColumnFamilyStore per column family */
     private final ConcurrentMap<UUID, ColumnFamilyStore> columnFamilyStores = new ConcurrentHashMap<>();

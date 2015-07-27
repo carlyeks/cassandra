@@ -157,15 +157,15 @@ public class StreamReceiveTask extends StreamTask
                         {
                             while (scanner.hasNext())
                             {
-                                logger.info("Writing mutation");
                                 try (UnfilteredRowIterator rowIterator = scanner.next())
                                 {
                                     new Mutation(UnfilteredRowIterators.toUpdate(rowIterator)).apply();
                                 }
-
-                                logger.info("Wrote mutation");
                             }
                         }
+
+                        //Delete the sstable
+                        reader.selfRef().ensureReleased();
                     }
                 }
                 else
@@ -175,14 +175,15 @@ public class StreamReceiveTask extends StreamTask
                     cfs.addSSTables(readers);
                     cfs.indexManager.maybeBuildSecondaryIndexes(readers, cfs.indexManager.allIndexesNames());
                 }
-            }catch (Throwable t)
+
+                task.session.taskCompleted(task);
+            }
+            catch (Throwable t)
             {
                 logger.error("Error !", t);
+                task.session.sessionFailed();
             }
 
-
-            logger.info("Finished task");
-            task.session.taskCompleted(task);
         }
     }
 
