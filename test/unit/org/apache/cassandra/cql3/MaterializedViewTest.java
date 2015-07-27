@@ -414,6 +414,87 @@ public class MaterializedViewTest extends CQLTester
     }
 
     @Test
+    public void testCollections() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "intval int, " +
+                    "listval list<int>, " +
+                    "PRIMARY KEY (k))");
+
+        execute("USE " + keyspace());
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv AS SELECT * FROM %s WHERE k IS NOT NULL AND intval IS NOT NULL PRIMARY KEY (intval, k)");
+
+        updateMV("INSERT INTO %s (k, intval, listval) VALUES (?, ?, fromJson(?))", 0, 0, "[1, 2, 3]");
+        assertRows(execute("SELECT k, listval FROM %s WHERE k = ?", 0), row(0, list(1, 2, 3)));
+        assertRows(execute("SELECT k, listval from mv WHERE intval = ?", 0), row(0, list(1, 2, 3)));
+
+        updateMV("INSERT INTO %s (k, intval) VALUES (?, ?)", 1, 1);
+        updateMV("INSERT INTO %s (k, listval) VALUES (?, fromJson(?))", 1, "[1, 2, 3]");
+        assertRows(execute("SELECT k, listval FROM %s WHERE k = ?", 1), row(1, list(1, 2, 3)));
+        assertRows(execute("SELECT k, listval from mv WHERE intval = ?", 1), row(1, list(1, 2, 3)));
+
+        executeNet(protocolVersion, "DROP MATERIALIZED VIEW mv");
+    }
+
+    @Test
+    public void testUpdate() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "intval int, " +
+                    "PRIMARY KEY (k))");
+
+        execute("USE " + keyspace());
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv AS SELECT * FROM %s WHERE k IS NOT NULL AND intval IS NOT NULL PRIMARY KEY (intval, k)");
+
+        updateMV("INSERT INTO %s (k, intval) VALUES (?, ?)", 0, 0);
+        assertRows(execute("SELECT k, intval FROM %s WHERE k = ?", 0), row(0, 0));
+        assertRows(execute("SELECT k, intval from mv WHERE intval = ?", 0), row(0, 0));
+
+        updateMV("INSERT INTO %s (k, intval) VALUES (?, ?)", 0, 1);
+        assertRows(execute("SELECT k, intval FROM %s WHERE k = ?", 0), row(0, 1));
+        assertRows(execute("SELECT k, intval from mv WHERE intval = ?", 1), row(0, 1));
+
+        executeNet(protocolVersion, "DROP MATERIALIZED VIEW mv");
+    }
+
+    @Test
+    public void testDecimalUpdate() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "decimalval decimal, " +
+                    "asciival ascii, " +
+                    "PRIMARY KEY (k))");
+
+        execute("USE " + keyspace());
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW mv AS SELECT * FROM %s WHERE k IS NOT NULL AND decimalval IS NOT NULL PRIMARY KEY (decimalval, k)");
+
+        updateMV("INSERT INTO %s (k, asciival) VALUES (?, ?)", 0, "ascii text");
+        updateMV("INSERT INTO %s (k, decimalval) VALUES (?, fromJson(?))", 0, "123123");
+        assertRows(execute("SELECT k, decimalval FROM %s WHERE k = ?", 0), row(0, new BigDecimal("123123")));
+
+        assertRows(execute("SELECT k, asciival from mv WHERE decimalval = fromJson(?)", "123123.123123"));
+        assertRows(execute("SELECT k, asciival from mv WHERE decimalval = fromJson(?)", "123123"), row(0, "ascii text"));
+
+
+        // accept strings for numbers that cannot be represented as doubles
+        updateMV("INSERT INTO %s (k, decimalval) VALUES (?, fromJson(?))", 0, "\"123123.123123\"");
+        assertRows(execute("SELECT k, decimalval, asciival FROM %s WHERE k = ?", 0), row(0, new BigDecimal("123123.123123"), "ascii text"));
+
+        assertRows(execute("SELECT k, asciival from mv WHERE decimalval = fromJson(?)", "\"123123.123123\""), row(0, "ascii text"));
+
+        executeNet(protocolVersion, "DROP MATERIALIZED VIEW mv");
+    }
+
+    @Test
     public void testAllTypes() throws Throwable
     {
         String myType = createType("CREATE TYPE %s (a int, b uuid, c set<text>)");

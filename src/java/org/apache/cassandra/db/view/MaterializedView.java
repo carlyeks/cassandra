@@ -60,7 +60,6 @@ import org.apache.cassandra.db.rows.ColumnData;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.service.pager.QueryPager;
-import org.apache.cassandra.utils.FBUtilities;
 
 /**
  * A Materialized View copies data from a base table into a view table which can be queried independently from the
@@ -276,7 +275,7 @@ public class MaterializedView
         TemporalRow.Resolver resolver = TemporalRow.earliest;
         return createTombstone(temporalRow,
                                viewPartitionKey(temporalRow, resolver),
-                               new DeletionTime(temporalRow.viewClusteringTimestamp(), FBUtilities.nowInSeconds()),
+                               new DeletionTime(temporalRow.viewClusteringTimestamp(), temporalRow.nowInSec),
                                resolver,
                                temporalRow.nowInSec);
     }
@@ -284,7 +283,7 @@ public class MaterializedView
     /**
      * @return Mutation which is the transformed base table mutation for the materialized view.
      */
-    private PartitionUpdate createUpdatesForInserts(TemporalRow temporalRow)
+    private PartitionUpdate createUpdatesForInserts(TemporalRow temporalRow, boolean hasTombstone)
     {
         TemporalRow.Resolver resolver = TemporalRow.latest;
 
@@ -295,7 +294,7 @@ public class MaterializedView
             return null;
         }
 
-        Row.Builder regularBuilder = ArrayBackedRow.unsortedBuilder(PartitionColumns.NONE.regulars, FBUtilities.nowInSeconds());
+        Row.Builder regularBuilder = ArrayBackedRow.unsortedBuilder(viewCfs.metadata.partitionColumns().regulars, temporalRow.nowInSec);
 
         CBuilder clustering = CBuilder.create(viewCfs.getComparator());
         for (int i = 0; i < viewCfs.metadata.clusteringColumns().size(); i++)
@@ -313,7 +312,7 @@ public class MaterializedView
             if (columnDefinition.isPrimaryKeyColumn())
                 continue;
 
-            for (Cell cell : temporalRow.values(columnDefinition, resolver, temporalRow.viewClusteringTimestamp()))
+            for (Cell cell : temporalRow.values(columnDefinition, resolver))
             {
                 if (columnDefinition.isComplex())
                 {
@@ -397,7 +396,7 @@ public class MaterializedView
             }
             else
             {
-                command = SinglePartitionReadCommand.fullPartitionRead(baseCfs.metadata, FBUtilities.nowInSeconds(), dk);
+                command = SinglePartitionReadCommand.fullPartitionRead(baseCfs.metadata, rowSet.nowInSec, dk);
             }
 
             QueryPager pager = command.getPager(null);
@@ -513,17 +512,19 @@ public class MaterializedView
         {
             // If we are building, there is no need to check for partition tombstones; those values will not be present
             // in the partition data
+            boolean hasTombstone = false;
             if (!isBuilding)
             {
                 PartitionUpdate partitionTombstone = createRangeTombstoneForRow(temporalRow);
-                if (partitionTombstone != null)
+                hasTombstone = partitionTombstone != null;
+                if (hasTombstone)
                 {
                     if (mutations == null) mutations = new LinkedList<>();
                     mutations.add(new Mutation(partitionTombstone));
                 }
             }
 
-            PartitionUpdate insert = createUpdatesForInserts(temporalRow);
+            PartitionUpdate insert = createUpdatesForInserts(temporalRow, hasTombstone);
             if (insert != null)
             {
                 if (mutations == null) mutations = new LinkedList<>();

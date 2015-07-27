@@ -123,6 +123,7 @@ public class TemporalRow
         Iterator<TemporalCell> iterator = cells.iterator();
         if (!iterator.hasNext())
             return null;
+
         TemporalCell value = iterator.next();
         while (iterator.hasNext())
             value = value.reconcile(iterator.next());
@@ -169,9 +170,9 @@ public class TemporalRow
             return localDeletionTime == NO_DELETION_TIME || (ttl != NO_TTL && now < localDeletionTime);
         }
 
-        public Cell cell(ColumnDefinition definition, CellPath cellPath, long newTimeStamp)
+        public Cell cell(ColumnDefinition definition, CellPath cellPath)
         {
-            return new BufferCell(definition, isNew ? newTimeStamp : newTimeStamp - 1, ttl, localDeletionTime, value, cellPath);
+            return new BufferCell(definition, timestamp, ttl, localDeletionTime, value, cellPath);
         }
     }
 
@@ -252,7 +253,7 @@ public class TemporalRow
             this.viewClusteringLocalDeletionTime = minValueIfSet(this.viewClusteringLocalDeletionTime, localDeletionTime, NO_DELETION_TIME);
         }
 
-        innerMap.get(cellPath).put(timestamp, new TemporalCell(value, NO_TIMESTAMP, NO_TTL, NO_DELETION_TIME, isNew));
+        innerMap.get(cellPath).put(timestamp, new TemporalCell(value, timestamp, ttl, localDeletionTime, isNew));
     }
 
     private static int minValueIfSet(int existing, int update, int defaultValue)
@@ -318,7 +319,7 @@ public class TemporalRow
             if (clusteringColumns.containsKey(columnIdentifier))
                 return clusteringColumns.get(columnIdentifier);
 
-            Collection<org.apache.cassandra.db.rows.Cell> val = values(definition, resolver, 1L);
+            Collection<org.apache.cassandra.db.rows.Cell> val = values(definition, resolver);
             if (val != null && val.size() == 1)
                 return Iterables.getOnlyElement(val).value();
         }
@@ -338,7 +339,7 @@ public class TemporalRow
         return clusterTombstone == null ? DeletionTime.LIVE : clusterTombstone.deletionTime();
     }
 
-    public Collection<org.apache.cassandra.db.rows.Cell> values(ColumnDefinition definition, Resolver resolver, final long newTimeStamp)
+    public Collection<org.apache.cassandra.db.rows.Cell> values(ColumnDefinition definition, Resolver resolver)
     {
         Map<CellPath, SortedMap<Long, TemporalCell>> innerMap = columnValues.get(definition.name);
         if (innerMap == null)
@@ -353,7 +354,7 @@ public class TemporalRow
             TemporalCell cell = resolver.resolve(pathAndCells.getValue().values());
 
             if (cell != null)
-                value.add(cell.cell(definition, pathAndCells.getKey(), newTimeStamp));
+                value.add(cell.cell(definition, pathAndCells.getKey()));
         }
         return value;
     }
@@ -385,7 +386,7 @@ public class TemporalRow
         private final ByteBuffer key;
         public final DecoratedKey dk;
         private final Map<Clustering, TemporalRow> clusteringToRow;
-        private final int nowInSec = FBUtilities.nowInSeconds();
+        final int nowInSec = FBUtilities.nowInSeconds();
 
         Set(ColumnFamilyStore baseCfs, java.util.Set<ColumnIdentifier> viewPrimaryKey, ByteBuffer key)
         {
