@@ -50,6 +50,7 @@ import org.apache.cassandra.db.PartitionColumns;
 import org.apache.cassandra.db.RangeTombstone;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.ReadOrderGroup;
+import org.apache.cassandra.db.RowUpdateBuilder;
 import org.apache.cassandra.db.SinglePartitionReadCommand;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.partitions.AbstractThreadUnsafePartition;
@@ -58,9 +59,11 @@ import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.db.rows.ArrayBackedRow;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.rows.ColumnData;
+import org.apache.cassandra.db.rows.ComplexColumnData;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.service.pager.QueryPager;
+import org.apache.cassandra.utils.FBUtilities;
 
 /**
  * A Materialized View copies data from a base table into a view table which can be queried independently from the
@@ -228,6 +231,7 @@ public class MaterializedView
                                                    TemporalRow.Resolver resolver,
                                                    int nowInSec)
     {
+
         CFMetaData viewCfm = getViewCfs().metadata;
         Row.Builder builder = ArrayBackedRow.unsortedBuilder(viewCfm.partitionColumns().regulars, nowInSec);
         builder.newRow(viewClustering(temporalRow, resolver));
@@ -325,17 +329,7 @@ public class MaterializedView
 
             for (Cell cell : temporalRow.values(columnDefinition, resolver))
             {
-                if (columnDefinition.isComplex())
-                {
-                    if (cell.isTombstone())
-                        regularBuilder.addComplexDeletion(columnDefinition, new DeletionTime(cell.timestamp(), cell.localDeletionTime()));
-                    else
-                        regularBuilder.addCell(cell);
-                }
-                else
-                {
-                    regularBuilder.addCell(cell);
-                }
+                regularBuilder.addCell(cell);
             }
         }
 
@@ -369,12 +363,17 @@ public class MaterializedView
 
                 for (ColumnDefinition definition : baseComplexColumns.get())
                 {
-                    DeletionTime time = row.getComplexColumnData(definition).complexDeletion();
-                    if (!time.isLive())
+                    ComplexColumnData columnData = row.getComplexColumnData(definition);
+
+                    if (columnData != null)
                     {
-                        DecoratedKey targetKey = viewPartitionKey(temporalRow, resolver);
-                        if (targetKey != null)
-                            mutations.add(new Mutation(createComplexTombstone(temporalRow, targetKey, definition, time, resolver, temporalRow.nowInSec)));
+                        DeletionTime time = columnData.complexDeletion();
+                        if (!time.isLive())
+                        {
+                            DecoratedKey targetKey = viewPartitionKey(temporalRow, resolver);
+                            if (targetKey != null)
+                                mutations.add(new Mutation(createComplexTombstone(temporalRow, targetKey, definition, time, resolver, temporalRow.nowInSec)));
+                        }
                     }
                 }
             }
