@@ -142,7 +142,7 @@ public class TemporalRow
         private TemporalCell(ByteBuffer value, long timestamp, int ttl, int localDeletionTime, boolean isNew)
         {
             this.value = value;
-            this.timestamp = timestamp;
+            this.timestamp = isNew ? timestamp : timestamp - 1;
             this.ttl = ttl;
             this.localDeletionTime = localDeletionTime;
             this.isNew = isNew;
@@ -344,7 +344,6 @@ public class TemporalRow
         Map<CellPath, SortedMap<Long, TemporalCell>> innerMap = columnValues.get(definition.name);
         if (innerMap == null)
         {
-
             return Collections.emptyList();
         }
 

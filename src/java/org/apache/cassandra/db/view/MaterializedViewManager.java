@@ -44,6 +44,7 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.exceptions.UnavailableException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
+import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 
@@ -80,7 +81,7 @@ public class MaterializedViewManager
     {
         List<ColumnFamilyStore> viewColumnFamilies = new ArrayList<>();
         for (MaterializedView view : allViews())
-            viewColumnFamilies.add(view.viewCfs);
+            viewColumnFamilies.add(view.getViewCfs());
         return viewColumnFamilies;
     }
 
@@ -150,7 +151,7 @@ public class MaterializedViewManager
      * Calculates and pushes updates to the views replicas. The replicas are determined by
      * {@link MaterializedViewUtils#getViewNaturalEndpoint(String, Token, Token)}.
      */
-    public void pushReplicaUpdates(ByteBuffer key, PartitionUpdate update) throws UnavailableException, OverloadedException, WriteTimeoutException
+    public void pushViewReplicaUpdates(ByteBuffer key, PartitionUpdate update) throws UnavailableException, OverloadedException, WriteTimeoutException
     {
         // This happens when we are replaying from commitlog. In that case, we have already sent this commit off to the
         // view node.
@@ -199,11 +200,12 @@ public class MaterializedViewManager
         {
             for (PartitionUpdate cf : mutation.getPartitionUpdates())
             {
-                if (ignoreRf1 && Keyspace.open(cf.metadata().ksName).getReplicationStrategy().getReplicationFactor() == 1)
+                Keyspace keyspace = Keyspace.open(cf.metadata().ksName);
+
+                if (ignoreRf1 && keyspace.getReplicationStrategy().getReplicationFactor() == 1)
                     continue;
 
-                MaterializedViewManager viewManager = Keyspace.open(cf.metadata().ksName)
-                                                              .getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
+                MaterializedViewManager viewManager = keyspace.getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
                 if (viewManager.updateAffectsView(cf))
                     return true;
             }

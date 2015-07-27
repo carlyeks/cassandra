@@ -43,12 +43,14 @@ import org.apache.cassandra.db.Columns;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionInfo;
 import org.apache.cassandra.db.DeletionTime;
+import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.LivenessInfo;
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.db.PartitionColumns;
 import org.apache.cassandra.db.RangeTombstone;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.ReadOrderGroup;
+import org.apache.cassandra.db.RowUpdateBuilder;
 import org.apache.cassandra.db.SinglePartitionReadCommand;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.partitions.AbstractThreadUnsafePartition;
@@ -57,9 +59,11 @@ import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.db.rows.ArrayBackedRow;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.rows.ColumnData;
+import org.apache.cassandra.db.rows.ComplexColumnData;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.service.pager.QueryPager;
+import org.apache.cassandra.utils.FBUtilities;
 
 /**
  * A Materialized View copies data from a base table into a view table which can be queried independently from the
@@ -70,10 +74,10 @@ public class MaterializedView
 {
     public final String name;
 
-    public final ColumnFamilyStore viewCfs;
-    private final Columns viewColumns;
+
     private final ColumnFamilyStore baseCfs;
 
+    private ColumnFamilyStore _viewCfs = null;
     private final AtomicReference<List<ColumnDefinition>> partitionDefs = new AtomicReference<>();
     private final AtomicReference<List<ColumnDefinition>> primaryKeyDefs = new AtomicReference<>();
     private final AtomicReference<List<ColumnDefinition>> baseComplexColumns = new AtomicReference<>();
@@ -90,9 +94,14 @@ public class MaterializedView
         includeAll = definition.includeAll;
 
         viewHasAllPrimaryKeys = updateDefinition(definition);
-        CFMetaData viewCfm = Schema.instance.getCFMetaData(baseCfs.metadata.ksName, definition.viewName);
-        viewCfs = Schema.instance.getColumnFamilyStoreInstance(viewCfm.cfId);
-        viewColumns = viewCfm.partitionColumns().regulars;
+    }
+
+    public ColumnFamilyStore getViewCfs()
+    {
+        if (_viewCfs == null)
+            _viewCfs = Keyspace.openAndGetStore(Schema.instance.getCFMetaData(baseCfs.keyspace.getName(), name));
+
+        return _viewCfs;
     }
 
     private boolean resolveAndAddColumns(Iterable<ColumnIdentifier> columns, List<ColumnDefinition>... definitions)
@@ -174,7 +183,7 @@ public class MaterializedView
         {
             for (ColumnData data : row)
             {
-                if (viewCfs.metadata.getColumnDefinition(data.column().name) != null)
+                if (getViewCfs().metadata.getColumnDefinition(data.column().name) != null)
                     return true;
             }
         }
@@ -184,11 +193,12 @@ public class MaterializedView
 
     private Clustering viewClustering(TemporalRow temporalRow, TemporalRow.Resolver resolver)
     {
-        int numViewClustering = viewCfs.metadata.clusteringColumns().size();
-        CBuilder clustering = CBuilder.create(viewCfs.getComparator());
+        CFMetaData viewCfm = getViewCfs().metadata;
+        int numViewClustering = viewCfm.clusteringColumns().size();
+        CBuilder clustering = CBuilder.create(getViewCfs().getComparator());
         for (int i = 0; i < numViewClustering; i++)
         {
-            ColumnDefinition definition = viewCfs.metadata.clusteringColumns().get(i);
+            ColumnDefinition definition = viewCfm.clusteringColumns().get(i);
             clustering.add(temporalRow.clusteringValue(definition, resolver));
         }
 
@@ -204,10 +214,11 @@ public class MaterializedView
                                             TemporalRow.Resolver resolver,
                                             int nowInSec)
     {
-        Row.Builder builder = ArrayBackedRow.unsortedBuilder(viewColumns, nowInSec);
+        CFMetaData viewCfm = getViewCfs().metadata;
+        Row.Builder builder = ArrayBackedRow.unsortedBuilder(viewCfm.partitionColumns().regulars, nowInSec);
         builder.newRow(viewClustering(temporalRow, resolver));
         builder.addRowDeletion(deletionTime);
-        return PartitionUpdate.singleRowUpdate(viewCfs.metadata, partitionKey, builder.build());
+        return PartitionUpdate.singleRowUpdate(viewCfm, partitionKey, builder.build());
     }
 
     /**
@@ -220,10 +231,12 @@ public class MaterializedView
                                                    TemporalRow.Resolver resolver,
                                                    int nowInSec)
     {
-        Row.Builder builder = ArrayBackedRow.unsortedBuilder(viewColumns, nowInSec);
+
+        CFMetaData viewCfm = getViewCfs().metadata;
+        Row.Builder builder = ArrayBackedRow.unsortedBuilder(viewCfm.partitionColumns().regulars, nowInSec);
         builder.newRow(viewClustering(temporalRow, resolver));
         builder.addComplexDeletion(deletedColumn, deletionTime);
-        return PartitionUpdate.singleRowUpdate(viewCfs.metadata, partitionKey, builder.build());
+        return PartitionUpdate.singleRowUpdate(viewCfm, partitionKey, builder.build());
     }
 
     /**
@@ -245,9 +258,9 @@ public class MaterializedView
             partitionKey[i] = value;
         }
 
-        return viewCfs.partitioner.decorateKey(CFMetaData.serializePartitionKey(viewCfs.metadata
-                                                                                .getKeyValidatorAsClusteringComparator()
-                                                                                .make(partitionKey)));
+        return getViewCfs().partitioner.decorateKey(CFMetaData.serializePartitionKey(getViewCfs().metadata
+                                                                                     .getKeyValidatorAsClusteringComparator()
+                                                                                     .make(partitionKey)));
     }
 
     /**
@@ -288,6 +301,8 @@ public class MaterializedView
         TemporalRow.Resolver resolver = TemporalRow.latest;
 
         DecoratedKey partitionKey = viewPartitionKey(temporalRow, resolver);
+        ColumnFamilyStore viewCfs = getViewCfs();
+
         if (partitionKey == null)
         {
             // Not having a partition key means we aren't updating anything
@@ -314,17 +329,7 @@ public class MaterializedView
 
             for (Cell cell : temporalRow.values(columnDefinition, resolver))
             {
-                if (columnDefinition.isComplex())
-                {
-                    if (cell.isTombstone())
-                        regularBuilder.addComplexDeletion(columnDefinition, new DeletionTime(cell.timestamp(), cell.localDeletionTime()));
-                    else
-                        regularBuilder.addCell(cell);
-                }
-                else
-                {
-                    regularBuilder.addCell(cell);
-                }
+                regularBuilder.addCell(cell);
             }
         }
 
@@ -358,12 +363,17 @@ public class MaterializedView
 
                 for (ColumnDefinition definition : baseComplexColumns.get())
                 {
-                    DeletionTime time = row.getComplexColumnData(definition).complexDeletion();
-                    if (!time.isLive())
+                    ComplexColumnData columnData = row.getComplexColumnData(definition);
+
+                    if (columnData != null)
                     {
-                        DecoratedKey targetKey = viewPartitionKey(temporalRow, resolver);
-                        if (targetKey != null)
-                            mutations.add(new Mutation(createComplexTombstone(temporalRow, targetKey, definition, time, resolver, temporalRow.nowInSec)));
+                        DeletionTime time = columnData.complexDeletion();
+                        if (!time.isLive())
+                        {
+                            DecoratedKey targetKey = viewPartitionKey(temporalRow, resolver);
+                            if (targetKey != null)
+                                mutations.add(new Mutation(createComplexTombstone(temporalRow, targetKey, definition, time, resolver, temporalRow.nowInSec)));
+                        }
                     }
                 }
             }

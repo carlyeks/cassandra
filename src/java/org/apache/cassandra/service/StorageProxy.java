@@ -668,8 +668,7 @@ public class StorageProxy implements StorageProxyMBean
                                                                                naturalEndpoints,
                                                                                WriteType.BATCH,
                                                                                cleanup);
-                // exit early if we can't fulfill the CL at this time.
-                wrapper.handler.assureSufficientLiveNodes();
+
                 wrappers.add(wrapper);
 
 
@@ -678,7 +677,7 @@ public class StorageProxy implements StorageProxyMBean
             }
 
             // now actually perform the writes and wait for them to complete
-            syncWriteBatchedMutations(wrappers, localDataCenter, Stage.MATERIALIZED_VIEW_MUTATION);
+            asyncWriteBatchedMutations(wrappers, localDataCenter, Stage.MATERIALIZED_VIEW_MUTATION);
         }
         catch (WriteTimeoutException ex)
         {
@@ -711,6 +710,7 @@ public class StorageProxy implements StorageProxyMBean
     throws WriteTimeoutException, WriteFailureException, UnavailableException, OverloadedException, InvalidRequestException
     {
         Collection<Mutation> augmented = TriggerExecutor.instance.execute(mutations);
+
         boolean updatesView = MaterializedViewManager.updatesAffectView(mutations, true);
 
         if (augmented != null)
@@ -747,11 +747,13 @@ public class StorageProxy implements StorageProxyMBean
 
         try
         {
+
             // If we are requiring quorum nodes for removal, we upgrade consistency level to QUORUM unless we already
             // require ALL, or EACH_QUORUM. This is so that *at least* QUORUM nodes see the update.
             ConsistencyLevel batchConsistencyLevel = requireQuorumForRemove
                                                      ? ConsistencyLevel.QUORUM
                                                      : consistency_level;
+
             switch (consistency_level)
             {
                 case ALL:
@@ -875,6 +877,23 @@ public class StorageProxy implements StorageProxyMBean
         }
     }
 
+    private static void asyncWriteBatchedMutations(List<WriteResponseHandlerWrapper> wrappers, String localDataCenter, Stage stage)
+    {
+        for (WriteResponseHandlerWrapper wrapper : wrappers)
+        {
+            Iterable<InetAddress> endpoints = Iterables.concat(wrapper.handler.naturalEndpoints, wrapper.handler.pendingEndpoints);
+
+            try
+            {
+                sendToHintedEndpoints(wrapper.mutation, endpoints, wrapper.handler, localDataCenter, stage);
+            }
+            catch (OverloadedException | WriteTimeoutException e)
+            {
+                wrapper.handler.onFailure(FBUtilities.getBroadcastAddress());
+            }
+        }
+    }
+
     private static void syncWriteBatchedMutations(List<WriteResponseHandlerWrapper> wrappers, String localDataCenter, Stage stage)
     throws WriteTimeoutException, OverloadedException
     {
@@ -884,11 +903,9 @@ public class StorageProxy implements StorageProxyMBean
             sendToHintedEndpoints(wrapper.mutation, endpoints, wrapper.handler, localDataCenter, stage);
         }
 
-        if (stage != Stage.MATERIALIZED_VIEW_MUTATION)
-        {
-            for (WriteResponseHandlerWrapper wrapper : wrappers)
-                wrapper.handler.get();
-        }
+
+        for (WriteResponseHandlerWrapper wrapper : wrappers)
+            wrapper.handler.get();
     }
 
     /**
