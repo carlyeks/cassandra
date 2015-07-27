@@ -673,7 +673,7 @@ public class StorageProxy implements StorageProxyMBean
 
 
                 //Apply to local batchlog memtable in this thread
-                //BatchlogManager.getBatchlogMutationFor(mutations, batchUUID, MessagingService.current_version).apply();
+                BatchlogManager.getBatchlogMutationFor(mutations, batchUUID, MessagingService.current_version).apply();
             }
 
             // now actually perform the writes and wait for them to complete
@@ -711,12 +711,14 @@ public class StorageProxy implements StorageProxyMBean
     {
         Collection<Mutation> augmented = TriggerExecutor.instance.execute(mutations);
 
+        boolean updatesView = MaterializedViewManager.updatesAffectView(mutations, true);
+
         if (augmented != null)
-            mutateAtomically(augmented, consistencyLevel);
+            mutateAtomically(augmented, consistencyLevel, updatesView);
         else
         {
-            if (mutateAtomically)
-                mutateAtomically((Collection<Mutation>) mutations, consistencyLevel);
+            if (mutateAtomically || updatesView)
+                mutateAtomically((Collection<Mutation>) mutations, consistencyLevel, updatesView);
             else
                 mutate(mutations, consistencyLevel);
         }
@@ -730,9 +732,11 @@ public class StorageProxy implements StorageProxyMBean
      *
      * @param mutations the Mutations to be applied across the replicas
      * @param consistency_level the consistency level for the operation
+     * @param requireQuorumForRemove at least a quorum of nodes will see update before deleting batchlog
      */
     public static void mutateAtomically(Collection<Mutation> mutations,
-                                        ConsistencyLevel consistency_level)
+                                        ConsistencyLevel consistency_level,
+                                        boolean requireQuorumForRemove)
     throws UnavailableException, OverloadedException, WriteTimeoutException
     {
         Tracing.trace("Determining replicas for atomic batch");
@@ -743,7 +747,21 @@ public class StorageProxy implements StorageProxyMBean
 
         try
         {
-            final Collection<InetAddress> batchlogEndpoints = getBatchlogEndpoints(localDataCenter, consistency_level);
+
+            // If we are requiring quorum nodes for removal, we upgrade consistency level to QUORUM unless we already
+            // require ALL, or EACH_QUORUM. This is so that *at least* QUORUM nodes see the update.
+            ConsistencyLevel batchConsistencyLevel = requireQuorumForRemove
+                                                     ? ConsistencyLevel.QUORUM
+                                                     : consistency_level;
+
+            switch (consistency_level)
+            {
+                case ALL:
+                case EACH_QUORUM:
+                    batchConsistencyLevel = consistency_level;
+            }
+
+            final Collection<InetAddress> batchlogEndpoints = getBatchlogEndpoints(localDataCenter, batchConsistencyLevel);
             final UUID batchUUID = UUIDGen.getTimeUUID();
             BatchlogResponseHandler.BatchlogCleanup cleanup = new BatchlogResponseHandler.BatchlogCleanup(mutations.size(),
                                                                                                           new BatchlogResponseHandler.BatchlogCleanupCallback()
@@ -759,7 +777,7 @@ public class StorageProxy implements StorageProxyMBean
             {
                 WriteResponseHandlerWrapper wrapper = wrapBatchResponseHandler(mutation,
                                                                                consistency_level,
-                                                                               consistency_level,
+                                                                               batchConsistencyLevel,
                                                                                WriteType.BATCH,
                                                                                cleanup);
                 // exit early if we can't fulfill the CL at this time.

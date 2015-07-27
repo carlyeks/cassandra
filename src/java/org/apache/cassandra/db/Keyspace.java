@@ -397,7 +397,7 @@ public class Keyspace
             throw new RuntimeException("Testing write failures");
 
         Lock lock = null;
-        boolean requiresViewUpdate = updateIndexes && MaterializedViewManager.updatesAffectView(Collections.singleton(mutation));
+        boolean requiresViewUpdate = updateIndexes && MaterializedViewManager.updatesAffectView(Collections.singleton(mutation), false);
 
         if (requiresViewUpdate)
         {
@@ -413,8 +413,8 @@ public class Keyspace
                 }
                 else
                 {
-                    //This MV update can't happen right now. so rather than take up
-                    //the thread we will re-apply ourself to the queue and try again
+                    //This MV update can't happen right now. so rather than keep this thread busy
+                    // we will re-apply ourself to the queue and try again later
                     StageManager.getStage(Stage.MUTATION).execute(() -> {
                         if (writeCommitLog)
                             mutation.apply();

@@ -44,6 +44,7 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.exceptions.UnavailableException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
+import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 
@@ -193,14 +194,18 @@ public class MaterializedViewManager
         return null;
     }
 
-    public static boolean updatesAffectView(Collection<? extends IMutation> mutations)
+    public static boolean updatesAffectView(Collection<? extends IMutation> mutations, boolean ignoreRf1)
     {
         for (IMutation mutation : mutations)
         {
             for (PartitionUpdate cf : mutation.getPartitionUpdates())
             {
-                MaterializedViewManager viewManager = Keyspace.open(cf.metadata().ksName)
-                                                              .getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
+                Keyspace keyspace = Keyspace.open(cf.metadata().ksName);
+
+                if (ignoreRf1 && keyspace.getReplicationStrategy().getReplicationFactor() == 1)
+                    continue;
+
+                MaterializedViewManager viewManager = keyspace.getColumnFamilyStore(cf.metadata().cfId).materializedViewManager;
                 if (viewManager.updateAffectsView(cf))
                     return true;
             }
