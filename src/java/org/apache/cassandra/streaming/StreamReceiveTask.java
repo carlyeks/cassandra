@@ -132,58 +132,54 @@ public class StreamReceiveTask extends StreamTask
                 return;
             }
             ColumnFamilyStore cfs = Keyspace.open(kscf.left).getColumnFamilyStore(kscf.right);
+            boolean hasMaterializedViews = cfs.materializedViewManager.allViews().iterator().hasNext();
 
             List<SSTableReader> readers = new ArrayList<>();
             for (SSTableWriter writer : task.sstables)
-                readers.add(writer.openFinalEarly());
-            task.txn.finish();
-            task.sstables.clear();
+                readers.add(writer.finish(true));
 
 
-
-            try (Refs<SSTableReader> refs = Refs.ref(readers))
+            //We have a special path for Materialized view.
+            //Since the MV requires cleaning up any pre-existing state, we must put
+            //All partitions through the same write path as normal mutations.
+            if (hasMaterializedViews)
             {
-                //We have a special path for Materialized view.
-                //Since the MV requires cleaning up any pre-existing state, we must put
-                //All partitions through the same write path as normal mutations.
-                if (cfs.materializedViewManager.allViews().iterator().hasNext())
+                for (SSTableReader reader : readers)
                 {
-                    logger.info("Streamed data affects a Materialized View, mutating each partition");
 
-                    for (SSTableReader reader : readers)
+                    try (ISSTableScanner scanner = reader.getScanner())
                     {
-
-                        try(ISSTableScanner scanner = reader.getScanner())
+                        while (scanner.hasNext())
                         {
-                            while (scanner.hasNext())
+                            try (UnfilteredRowIterator rowIterator = scanner.next())
                             {
-                                try (UnfilteredRowIterator rowIterator = scanner.next())
-                                {
-                                    new Mutation(PartitionUpdate.fromIterator(rowIterator)).apply();
-                                }
+                                new Mutation(PartitionUpdate.fromIterator(rowIterator)).apply();
                             }
                         }
-
-                        //Delete the sstable
-                        reader.selfRef().ensureReleased();
                     }
-                }
-                else
-                {
 
+                    //Delete the sstable
+                    reader.selfRef().release();
+                }
+
+                task.txn.finish();
+                task.sstables.clear();
+            }
+            else
+            {
+
+                task.txn.finish();
+                task.sstables.clear();
+
+                try (Refs<SSTableReader> refs = Refs.ref(readers))
+                {
                     // add sstables and build secondary indexes
                     cfs.addSSTables(readers);
                     cfs.indexManager.maybeBuildSecondaryIndexes(readers, cfs.indexManager.allIndexesNames());
                 }
-
-                task.session.taskCompleted(task);
-            }
-            catch (Throwable t)
-            {
-                logger.error("Error !", t);
-                task.session.sessionFailed();
             }
 
+            task.session.taskCompleted(task);
         }
     }
 
