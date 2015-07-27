@@ -18,27 +18,14 @@
 package org.apache.cassandra.io.sstable;
 
 import java.io.File;
-import java.io.FilenameFilter;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.base.Throwables;
 
 import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
-import org.apache.cassandra.db.rows.RowStats;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.dht.IPartitioner;
-import org.apache.cassandra.io.sstable.format.SSTableFormat;
-import org.apache.cassandra.io.sstable.format.SSTableWriter;
-import org.apache.cassandra.service.ActiveRepairService;
-import org.apache.cassandra.utils.CounterId;
-import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.Pair;
 
 /**
  * A SSTable writer that assumes rows are in (partitioner) sorted order.
@@ -55,14 +42,14 @@ class SSTableSimpleWriter extends AbstractSSTableSimpleWriter
     protected DecoratedKey currentKey;
     protected PartitionUpdate update;
 
-    private SSTableWriter writer;
+    private SSTableTxnWriter writer;
 
     protected SSTableSimpleWriter(File directory, CFMetaData metadata, IPartitioner partitioner, PartitionColumns columns)
     {
         super(directory, metadata, partitioner, columns);
     }
 
-    private SSTableWriter getOrCreateWriter()
+    private SSTableTxnWriter getOrCreateWriter()
     {
         if (writer == null)
             writer = createWriter();

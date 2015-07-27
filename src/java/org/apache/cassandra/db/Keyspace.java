@@ -433,7 +433,6 @@ public class Keyspace
                 replayPosition = CommitLog.instance.add(mutation);
             }
 
-            DecoratedKey key = mutation.key();
             for (PartitionUpdate upd : mutation.getPartitionUpdates())
             {
                 ColumnFamilyStore cfs = columnFamilyStores.get(upd.metadata().cfId);
@@ -448,7 +447,7 @@ public class Keyspace
                     if (updateIndexes && cfs.materializedViewManager.updateAffectsView(upd))
                     {
                         Tracing.trace("Create materialized view mutations from replica");
-                        cfs.materializedViewManager.pushReplicaUpdates(key.getKey(), upd);
+                        cfs.materializedViewManager.pushReplicaUpdates(upd.partitionKey().getKey(), upd);
                     }
                 }
                 catch (Exception e)

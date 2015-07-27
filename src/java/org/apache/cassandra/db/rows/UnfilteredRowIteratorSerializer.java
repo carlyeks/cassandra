@@ -89,7 +89,6 @@ public class UnfilteredRowIteratorSerializer
     // Should only be used for the on-wire format.
     public void serialize(UnfilteredRowIterator iterator, DataOutputPlus out, SerializationHeader header, int version, int rowEstimate) throws IOException
     {
-        CFMetaData.serializer.serialize(iterator.metadata(), out, version);
         ByteBufferUtil.writeWithLength(iterator.partitionKey().getKey(), out);
 
         int flags = 0;
@@ -118,7 +117,7 @@ public class UnfilteredRowIteratorSerializer
         SerializationHeader.serializer.serializeForMessaging(header, out, hasStatic);
 
         if (!partitionDeletion.isLive())
-            writeDelTime(partitionDeletion, header, out);
+            header.writeDeletionTime(partitionDeletion, out);
 
         if (hasStatic)
             UnfilteredSerializer.serializer.serialize(staticRow, header, out, version);
@@ -141,8 +140,7 @@ public class UnfilteredRowIteratorSerializer
 
         assert rowEstimate >= 0;
 
-        long size = CFMetaData.serializer.serializedSize(iterator.metadata(), version)
-                  + TypeSizes.sizeofWithLength(iterator.partitionKey().getKey())
+        long size = TypeSizes.sizeofWithLength(iterator.partitionKey().getKey())
                   + 1; // flags
 
         if (iterator.isEmpty())
@@ -155,7 +153,7 @@ public class UnfilteredRowIteratorSerializer
         size += SerializationHeader.serializer.serializedSizeForMessaging(header, hasStatic);
 
         if (!partitionDeletion.isLive())
-            size += delTimeSerializedSize(partitionDeletion, header);
+            size += header.deletionTimeSerializedSize(partitionDeletion);
 
         if (hasStatic)
             size += UnfilteredSerializer.serializer.serializedSize(staticRow, header, version);
@@ -170,16 +168,15 @@ public class UnfilteredRowIteratorSerializer
         return size;
     }
 
-    public Header deserializeHeader(DataInputPlus in, int version, SerializationHelper.Flag flag) throws IOException
+    public Header deserializeHeader(DataInputPlus in, int version, CFMetaData metadata, SerializationHelper.Flag flag) throws IOException
     {
-        CFMetaData metadata = CFMetaData.serializer.deserialize(in, version);
         DecoratedKey key = StorageService.getPartitioner().decorateKey(ByteBufferUtil.readWithLength(in));
         int flags = in.readUnsignedByte();
         boolean isReversed = (flags & IS_REVERSED) != 0;
         if ((flags & IS_EMPTY) != 0)
         {
-            SerializationHeader sh = new SerializationHeader(metadata, PartitionColumns.NONE, RowStats.NO_STATS);
-            return new Header(sh, metadata, key, isReversed, true, null, null, 0);
+            SerializationHeader sh = new SerializationHeader(metadata, PartitionColumns.NONE, EncodingStats.NO_STATS);
+            return new Header(sh, key, isReversed, true, null, null, 0);
         }
 
         boolean hasPartitionDeletion = (flags & HAS_PARTITION_DELETION) != 0;
@@ -188,24 +185,24 @@ public class UnfilteredRowIteratorSerializer
 
         SerializationHeader header = SerializationHeader.serializer.deserializeForMessaging(in, metadata, hasStatic);
 
-        DeletionTime partitionDeletion = hasPartitionDeletion ? readDelTime(in, header) : DeletionTime.LIVE;
+        DeletionTime partitionDeletion = hasPartitionDeletion ? header.readDeletionTime(in) : DeletionTime.LIVE;
 
         Row staticRow = Rows.EMPTY_STATIC_ROW;
         if (hasStatic)
             staticRow = UnfilteredSerializer.serializer.deserializeStaticRow(in, header, new SerializationHelper(metadata, version, flag));
 
         int rowEstimate = hasRowEstimate ? (int)in.readVInt() : -1;
-        return new Header(header, metadata, key, isReversed, false, partitionDeletion, staticRow, rowEstimate);
+        return new Header(header, key, isReversed, false, partitionDeletion, staticRow, rowEstimate);
     }
 
-    public UnfilteredRowIterator deserialize(DataInputPlus in, int version, SerializationHelper.Flag flag, Header header) throws IOException
+    public UnfilteredRowIterator deserialize(DataInputPlus in, int version, CFMetaData metadata, SerializationHelper.Flag flag, Header header) throws IOException
     {
         if (header.isEmpty)
-            return UnfilteredRowIterators.emptyIterator(header.metadata, header.key, header.isReversed);
+            return UnfilteredRowIterators.emptyIterator(metadata, header.key, header.isReversed);
 
-        final SerializationHelper helper = new SerializationHelper(header.metadata, version, flag);
+        final SerializationHelper helper = new SerializationHelper(metadata, version, flag);
         final SerializationHeader sHeader = header.sHeader;
-        return new AbstractUnfilteredRowIterator(header.metadata, header.key, header.partitionDeletion, sHeader.columns(), header.staticRow, header.isReversed, sHeader.stats())
+        return new AbstractUnfilteredRowIterator(metadata, header.key, header.partitionDeletion, sHeader.columns(), header.staticRow, header.isReversed, sHeader.stats())
         {
             private final Row.Builder builder = ArrayBackedRow.sortedBuilder(sHeader.columns().regulars);
 
@@ -224,40 +221,14 @@ public class UnfilteredRowIteratorSerializer
         };
     }
 
-    public UnfilteredRowIterator deserialize(DataInputPlus in, int version, SerializationHelper.Flag flag) throws IOException
+    public UnfilteredRowIterator deserialize(DataInputPlus in, int version, CFMetaData metadata, SerializationHelper.Flag flag) throws IOException
     {
-        return deserialize(in, version, flag,  deserializeHeader(in, version, flag));
-    }
-
-    public static void writeDelTime(DeletionTime dt, SerializationHeader header, DataOutputPlus out) throws IOException
-    {
-        out.writeVInt(header.encodeTimestamp(dt.markedForDeleteAt()));
-        out.writeVInt(header.encodeDeletionTime(dt.localDeletionTime()));
-    }
-
-    public static long delTimeSerializedSize(DeletionTime dt, SerializationHeader header)
-    {
-        return TypeSizes.sizeofVInt(header.encodeTimestamp(dt.markedForDeleteAt()))
-             + TypeSizes.sizeofVInt(header.encodeDeletionTime(dt.localDeletionTime()));
-    }
-
-    public static DeletionTime readDelTime(DataInputPlus in, SerializationHeader header) throws IOException
-    {
-        long markedAt = header.decodeTimestamp(in.readVInt());
-        int localDelTime = header.decodeDeletionTime((int)in.readVInt());
-        return new DeletionTime(markedAt, localDelTime);
-    }
-
-    public static void skipDelTime(DataInputPlus in, SerializationHeader header) throws IOException
-    {
-        in.readVInt();
-        in.readVInt();
+        return deserialize(in, version, metadata, flag, deserializeHeader(in, version, metadata, flag));
     }
 
     public static class Header
     {
         public final SerializationHeader sHeader;
-        public final CFMetaData metadata;
         public final DecoratedKey key;
         public final boolean isReversed;
         public final boolean isEmpty;
@@ -266,7 +237,6 @@ public class UnfilteredRowIteratorSerializer
         public final int rowEstimate; // -1 if no estimate
 
         private Header(SerializationHeader sHeader,
-                       CFMetaData metadata,
                        DecoratedKey key,
                        boolean isReversed,
                        boolean isEmpty,
@@ -275,7 +245,6 @@ public class UnfilteredRowIteratorSerializer
                        int rowEstimate)
         {
             this.sHeader = sHeader;
-            this.metadata = metadata;
             this.key = key;
             this.isReversed = isReversed;
             this.isEmpty = isEmpty;
@@ -287,8 +256,8 @@ public class UnfilteredRowIteratorSerializer
         @Override
         public String toString()
         {
-            return String.format("{header=%s, table=%s.%s, key=%s, isReversed=%b, isEmpty=%b, del=%s, staticRow=%s, rowEstimate=%d}",
-                                 sHeader, metadata.ksName, metadata.cfName, key, isReversed, isEmpty, partitionDeletion, staticRow.toString(metadata), rowEstimate);
+            return String.format("{header=%s, key=%s, isReversed=%b, isEmpty=%b, del=%s, staticRow=%s, rowEstimate=%d}",
+                                 sHeader, key, isReversed, isEmpty, partitionDeletion, staticRow, rowEstimate);
         }
     }
 }

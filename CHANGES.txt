@@ -1,9 +1,15 @@
 3.0
+<<<<<<< HEAD
+ * Implement proper sandboxing for UDFs (CASSANDRA-9402)
+=======
+ * Simplify (and unify) cleanup of compaction leftovers (CASSANDRA-7066)
+>>>>>>> Introduce safer durable sstable membership management
  * Allow extra schema definitions in cassandra-stress yaml (CASSANDRA-9850)
  * Metrics should use up to date nomenclature (CASSANDRA-9448)
  * Change CREATE/ALTER TABLE syntax for compression (CASSANDRA-8384)
  * Cleanup crc and adler code for java 8 (CASSANDRA-9650)
- * Storage engine refactor (CASSANDRA-8099, 9743, 9746, 9759, 9781, 9808, 9825, 9848, 9705, 9859)
+ * Storage engine refactor (CASSANDRA-8099, 9743, 9746, 9759, 9781, 9808, 9825, 9848,
+   9705, 9859, 9867, 9874, 9828, 9801)
  * Update Guava to 18.0 (CASSANDRA-9653)
  * Bloom filter false positive ratio is not honoured (CASSANDRA-8413)
  * New option for cassandra-stress to leave a ratio of columns null (CASSANDRA-9522)
@@ -23,6 +29,9 @@
 2.2.1
  * UDF / UDA execution time in trace (CASSANDRA-9723)
  * Remove repair snapshot leftover on startup (CASSANDRA-7357)
+ * Use random nodes for batch log when only 2 racks (CASSANDRA-8735)
+Merged from 2.0:
+ * Log when messages are dropped due to cross_node_timeout (CASSANDRA-9793)
 
 
 2.2.0

@@ -31,10 +31,10 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ColumnFilter;
 import org.apache.cassandra.db.rows.*;
+import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.io.util.DataOutputPlus;
-import org.apache.cassandra.io.util.NIODataInputStream;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.utils.FBUtilities;
@@ -70,7 +70,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
     private boolean canReOpen = true;
 
     private final MutableDeletionInfo deletionInfo;
-    private RowStats stats; // will be null if isn't built
+    private EncodingStats stats; // will be null if isn't built
 
     private Row staticRow = Rows.EMPTY_STATIC_ROW;
 
@@ -82,7 +82,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
                             Row staticRow,
                             List<Row> rows,
                             MutableDeletionInfo deletionInfo,
-                            RowStats stats,
+                            EncodingStats stats,
                             boolean isBuilt,
                             boolean canHaveShadowedData)
     {
@@ -112,7 +112,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
      */
     public static PartitionUpdate emptyUpdate(CFMetaData metadata, DecoratedKey key)
     {
-        return new PartitionUpdate(metadata, key, PartitionColumns.NONE, Rows.EMPTY_STATIC_ROW, Collections.<Row>emptyList(), MutableDeletionInfo.live(), RowStats.NO_STATS, true, false);
+        return new PartitionUpdate(metadata, key, PartitionColumns.NONE, Rows.EMPTY_STATIC_ROW, Collections.<Row>emptyList(), MutableDeletionInfo.live(), EncodingStats.NO_STATS, true, false);
     }
 
     /**
@@ -127,7 +127,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
      */
     public static PartitionUpdate fullPartitionDelete(CFMetaData metadata, DecoratedKey key, long timestamp, int nowInSec)
     {
-        return new PartitionUpdate(metadata, key, PartitionColumns.NONE, Rows.EMPTY_STATIC_ROW, Collections.<Row>emptyList(), new MutableDeletionInfo(timestamp, nowInSec), RowStats.NO_STATS, true, false);
+        return new PartitionUpdate(metadata, key, PartitionColumns.NONE, Rows.EMPTY_STATIC_ROW, Collections.<Row>emptyList(), new MutableDeletionInfo(timestamp, nowInSec), EncodingStats.NO_STATS, true, false);
     }
 
     /**
@@ -142,8 +142,8 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
     public static PartitionUpdate singleRowUpdate(CFMetaData metadata, DecoratedKey key, Row row)
     {
         return row.isStatic()
-             ? new PartitionUpdate(metadata, key, new PartitionColumns(row.columns(), Columns.NONE), row, Collections.<Row>emptyList(), MutableDeletionInfo.live(), RowStats.NO_STATS, true, false)
-             : new PartitionUpdate(metadata, key, new PartitionColumns(Columns.NONE, row.columns()), Rows.EMPTY_STATIC_ROW, Collections.singletonList(row), MutableDeletionInfo.live(), RowStats.NO_STATS, true, false);
+             ? new PartitionUpdate(metadata, key, new PartitionColumns(row.columns(), Columns.NONE), row, Collections.<Row>emptyList(), MutableDeletionInfo.live(), EncodingStats.NO_STATS, true, false)
+             : new PartitionUpdate(metadata, key, new PartitionColumns(Columns.NONE, row.columns()), Rows.EMPTY_STATIC_ROW, Collections.singletonList(row), MutableDeletionInfo.live(), EncodingStats.NO_STATS, true, false);
     }
 
     /**
@@ -182,7 +182,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
 
         List<Row> rows = new ArrayList<>();
 
-        RowStats.Collector collector = new RowStats.Collector();
+        EncodingStats.Collector collector = new EncodingStats.Collector();
 
         while (iterator.hasNext())
         {
@@ -229,7 +229,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
 
         try
         {
-            return serializer.deserialize(new NIODataInputStream(bytes, true),
+            return serializer.deserialize(new DataInputBuffer(bytes, true),
                                           version,
                                           SerializationHelper.Flag.LOCAL,
                                           version < MessagingService.VERSION_30 ? key : null);
@@ -285,7 +285,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
         MutableDeletionInfo deletion = MutableDeletionInfo.live();
         Row staticRow = Rows.EMPTY_STATIC_ROW;
         List<Iterator<Row>> updateRowIterators = new ArrayList<>(size);
-        RowStats stats = RowStats.NO_STATS;
+        EncodingStats stats = EncodingStats.NO_STATS;
 
         for (PartitionUpdate update : updates)
         {
@@ -412,7 +412,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
         return super.rowCount();
     }
 
-    public RowStats stats()
+    public EncodingStats stats()
     {
         maybeBuild();
         return stats;
@@ -649,7 +649,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
 
     private void finishBuild()
     {
-        RowStats.Collector collector = new RowStats.Collector();
+        EncodingStats.Collector collector = new EncodingStats.Collector();
         deletionInfo.collectStats(collector);
         for (Row row : rows)
             Rows.collectStats(row, collector);
@@ -687,6 +687,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
                 // assert count == written: "Table had " + count + " columns, but " + written + " written";
             }
 
+            CFMetaData.serializer.serialize(update.metadata(), out, version);
             try (UnfilteredRowIterator iter = update.sliceableUnfilteredIterator())
             {
                 assert !iter.isReverseOrder();
@@ -717,17 +718,18 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
 
             assert key == null; // key is only there for the old format
 
-            UnfilteredRowIteratorSerializer.Header header = UnfilteredRowIteratorSerializer.serializer.deserializeHeader(in, version, flag);
+            CFMetaData metadata = CFMetaData.serializer.deserialize(in, version);
+            UnfilteredRowIteratorSerializer.Header header = UnfilteredRowIteratorSerializer.serializer.deserializeHeader(in, version, metadata, flag);
             if (header.isEmpty)
-                return emptyUpdate(header.metadata, header.key);
+                return emptyUpdate(metadata, header.key);
 
             assert !header.isReversed;
             assert header.rowEstimate >= 0;
 
-            MutableDeletionInfo.Builder deletionBuilder = MutableDeletionInfo.builder(header.partitionDeletion, header.metadata.comparator, false);
+            MutableDeletionInfo.Builder deletionBuilder = MutableDeletionInfo.builder(header.partitionDeletion, metadata.comparator, false);
             List<Row> rows = new ArrayList<>(header.rowEstimate);
 
-            try (UnfilteredRowIterator partition = UnfilteredRowIteratorSerializer.serializer.deserialize(in, version, flag, header))
+            try (UnfilteredRowIterator partition = UnfilteredRowIteratorSerializer.serializer.deserialize(in, version, metadata, flag, header))
             {
                 while (partition.hasNext())
                 {
@@ -739,7 +741,7 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
                 }
             }
 
-            return new PartitionUpdate(header.metadata,
+            return new PartitionUpdate(metadata,
                                        header.key,
                                        header.sHeader.columns(),
                                        header.staticRow,
@@ -770,7 +772,8 @@ public class PartitionUpdate extends AbstractThreadUnsafePartition
 
             try (UnfilteredRowIterator iter = update.sliceableUnfilteredIterator())
             {
-                return UnfilteredRowIteratorSerializer.serializer.serializedSize(iter, version, update.rows.size());
+                return CFMetaData.serializer.serializedSize(update.metadata(), version)
+                     + UnfilteredRowIteratorSerializer.serializer.serializedSize(iter, version, update.rows.size());
             }
         }
     }

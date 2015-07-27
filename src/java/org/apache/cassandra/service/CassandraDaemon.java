@@ -36,16 +36,15 @@ import javax.management.remote.JMXConnectorServer;
 import javax.management.remote.JMXServiceURL;
 import javax.management.remote.rmi.RMIConnectorServer;
 
+import com.addthis.metrics3.reporter.config.ReporterConfig;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistryListener;
 import com.codahale.metrics.SharedMetricRegistries;
 import com.google.common.util.concurrent.Uninterruptibles;
-import org.apache.cassandra.gms.Gossiper;
-import org.apache.cassandra.metrics.DefaultNameFactory;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.addthis.metrics3.reporter.config.ReporterConfig;
 import org.apache.cassandra.concurrent.*;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -54,12 +53,15 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.StartupException;
+import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.sstable.CorruptSSTableException;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
+import org.apache.cassandra.metrics.DefaultNameFactory;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.schema.LegacySchemaMigrator;
+import org.apache.cassandra.cql3.functions.ThreadAwareSecurityManager;
 import org.apache.cassandra.thrift.ThriftServer;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.*;
@@ -150,6 +152,8 @@ public class CassandraDaemon
         if (FBUtilities.isWindows())
             WindowsFailedSnapshotTracker.deleteOldSnapshots();
 
+        ThreadAwareSecurityManager.install();
+
         logSystemInfo();
 
         CLibrary.tryMlockall();
@@ -165,7 +169,10 @@ public class CassandraDaemon
 
         try
         {
-            SystemKeyspace.snapshotOnVersionChange();
+            if (SystemKeyspace.snapshotOnVersionChange())
+            {
+                SystemKeyspace.migrateDataDirs();
+            }
         }
         catch (IOException e)
         {
@@ -213,17 +220,6 @@ public class CassandraDaemon
 
         // load schema from disk
         Schema.instance.loadFromDisk();
-
-        // clean up compaction leftovers
-        Map<Pair<String, String>, Map<Integer, UUID>> unfinishedCompactions = SystemKeyspace.getUnfinishedCompactions();
-        for (Pair<String, String> kscf : unfinishedCompactions.keySet())
-        {
-            CFMetaData cfm = Schema.instance.getCFMetaData(kscf.left, kscf.right);
-            // CFMetaData can be null if CF is already dropped
-            if (cfm != null)
-                ColumnFamilyStore.removeUnfinishedCompactionLeftovers(cfm, unfinishedCompactions.get(kscf));
-        }
-        SystemKeyspace.discardCompactionsInProgress();
 
         // clean up debris in the rest of the keyspaces
         for (String keyspaceName : Schema.instance.getKeyspaces())

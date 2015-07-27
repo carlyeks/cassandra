@@ -210,11 +210,11 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
         return staticRow;
     }
 
-    public RowStats stats()
+    public EncodingStats stats()
     {
         // We could return sstable.header.stats(), but this may not be as accurate than the actual sstable stats (see
         // SerializationHeader.make() for details) so we use the latter instead.
-        return new RowStats(sstable.getMinTimestamp(), sstable.getMinLocalDeletionTime(), sstable.getMinTTL(), sstable.getAvgColumnSetPerRow());
+        return new EncodingStats(sstable.getMinTimestamp(), sstable.getMinLocalDeletionTime(), sstable.getMinTTL(), sstable.getAvgColumnSetPerRow());
     }
 
     public boolean hasNext()
@@ -417,7 +417,7 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
         private final List<IndexHelper.IndexInfo> indexes;
         private final boolean reversed;
 
-        private int currentIndexIdx = -1;
+        private int currentIndexIdx;
 
         // Marks the beginning of the block corresponding to currentIndexIdx.
         private FileMark mark;
@@ -469,16 +469,22 @@ abstract class AbstractSSTableIterator implements SliceableUnfilteredRowIterator
             return indexes.get(currentIndexIdx);
         }
 
-        // Finds the index of the first block containing the provided bound, starting at the current index.
+        // Finds the index of the first block containing the provided bound, starting at the provided index.
         // Will be -1 if the bound is before any block, and blocksCount() if it is after every block.
-        public int findBlockIndex(Slice.Bound bound)
+        public int findBlockIndex(Slice.Bound bound, int fromIdx)
         {
             if (bound == Slice.Bound.BOTTOM)
                 return -1;
             if (bound == Slice.Bound.TOP)
                 return blocksCount();
 
-            return IndexHelper.indexFor(bound, indexes, comparator, reversed, currentIndexIdx);
+            return IndexHelper.indexFor(bound, indexes, comparator, reversed, fromIdx);
+        }
+
+        @Override
+        public String toString()
+        {
+            return String.format("IndexState(indexSize=%d, currentBlock=%d, reversed=%b)", indexes.size(), currentIndexIdx, reversed);
         }
     }
 }

@@ -28,6 +28,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.annotations.VisibleForTesting;
+import org.apache.cassandra.db.compaction.OperationType;
+import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
+import org.apache.cassandra.io.sstable.SSTableTxnWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -284,6 +287,11 @@ public class Memtable implements Comparable<Memtable>
                 return isForThrift;
             }
 
+            public CFMetaData metadata()
+            {
+                return cfs.metadata;
+            }
+
             public boolean hasNext()
             {
                 return iter.hasNext();
@@ -362,8 +370,7 @@ public class Memtable implements Comparable<Memtable>
             logger.info("Writing {}", Memtable.this.toString());
 
             SSTableReader ssTable;
-            // errors when creating the writer that may leave empty temp files.
-            try (SSTableWriter writer = createFlushWriter(cfs.getTempSSTablePath(sstableDirectory), columnsCollector.get(), statsCollector.get()))
+            try (SSTableTxnWriter writer = createFlushWriter(cfs.getSSTablePath(sstableDirectory), columnsCollector.get(), statsCollector.get()))
             {
                 boolean trackContention = logger.isDebugEnabled();
                 int heavilyContendedRowCount = 0;
@@ -395,10 +402,10 @@ public class Memtable implements Comparable<Memtable>
                 {
                     logger.info(String.format("Completed flushing %s (%s) for commitlog position %s",
                                               writer.getFilename(),
-                                              FBUtilities.prettyPrintMemory(writer.getOnDiskFilePointer()),
+                                              FBUtilities.prettyPrintMemory(writer.getFilePointer()),
                                               context));
 
-                    // temp sstables should contain non-repaired data.
+                    // sstables should contain non-repaired data.
                     ssTable = writer.finish(true);
                 }
                 else
@@ -416,18 +423,23 @@ public class Memtable implements Comparable<Memtable>
             }
         }
 
-        public SSTableWriter createFlushWriter(String filename,
+        public SSTableTxnWriter createFlushWriter(String filename,
                                                PartitionColumns columns,
-                                               RowStats stats)
+                                               EncodingStats stats)
         {
+            // we operate "offline" here, as we expose the resulting reader consciously when done
+            // (although we may want to modify this behaviour in future, to encapsulate full flush behaviour in LifecycleTransaction)
+            LifecycleTransaction txn = LifecycleTransaction.offline(OperationType.FLUSH, cfs.metadata);
             MetadataCollector sstableMetadataCollector = new MetadataCollector(cfs.metadata.comparator).replayPosition(context);
-            return SSTableWriter.create(Descriptor.fromFilename(filename),
-                                        (long)partitions.size(),
-                                        ActiveRepairService.UNREPAIRED_SSTABLE,
-                                        cfs.metadata,
-                                        cfs.partitioner,
-                                        sstableMetadataCollector,
-                                        new SerializationHeader(cfs.metadata, columns, stats));
+            return new SSTableTxnWriter(txn,
+                                        SSTableWriter.create(Descriptor.fromFilename(filename),
+                                                             (long)partitions.size(),
+                                                             ActiveRepairService.UNREPAIRED_SSTABLE,
+                                                             cfs.metadata,
+                                                             cfs.partitioner,
+                                                             sstableMetadataCollector,
+                                                             new SerializationHeader(cfs.metadata, columns, stats),
+                                                             txn));
         }
     }
 
@@ -498,20 +510,20 @@ public class Memtable implements Comparable<Memtable>
 
     private static class StatsCollector
     {
-        private final AtomicReference<RowStats> stats = new AtomicReference<>(RowStats.NO_STATS);
+        private final AtomicReference<EncodingStats> stats = new AtomicReference<>(EncodingStats.NO_STATS);
 
-        public void update(RowStats newStats)
+        public void update(EncodingStats newStats)
         {
             while (true)
             {
-                RowStats current = stats.get();
-                RowStats updated = current.mergeWith(newStats);
+                EncodingStats current = stats.get();
+                EncodingStats updated = current.mergeWith(newStats);
                 if (stats.compareAndSet(current, updated))
                     return;
             }
         }
 
-        public RowStats get()
+        public EncodingStats get()
         {
             return stats.get();
         }
