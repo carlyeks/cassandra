@@ -159,7 +159,7 @@ public class StreamReceiveTask extends StreamTask
                             {
                                 try (UnfilteredRowIterator rowIterator = scanner.next())
                                 {
-                                    new Mutation(UnfilteredRowIterators.toUpdate(rowIterator)).apply();
+                                    new Mutation(PartitionUpdate.fromIterator(rowIterator)).apply();
                                 }
                             }
                         }
