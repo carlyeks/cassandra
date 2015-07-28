@@ -142,7 +142,7 @@ public class TemporalRow
         private TemporalCell(ByteBuffer value, long timestamp, int ttl, int localDeletionTime, boolean isNew)
         {
             this.value = value;
-            this.timestamp = isNew ? timestamp : timestamp - 1;
+            this.timestamp = timestamp;
             this.ttl = ttl;
             this.localDeletionTime = localDeletionTime;
             this.isNew = isNew;
