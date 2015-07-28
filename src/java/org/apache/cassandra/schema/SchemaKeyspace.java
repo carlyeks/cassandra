@@ -984,7 +984,7 @@ public final class SchemaKeyspace
         for (TriggerMetadata trigger : table.getTriggers())
             dropTriggerFromSchemaMutation(table, trigger, timestamp, mutation);
 
-        for (MaterializedViewDefinition materializedView: table.getMaterializedViews().values())
+        for (MaterializedViewDefinition materializedView : table.getMaterializedViews().values())
             dropMaterializedViewFromSchemaMutation(table, materializedView, timestamp, mutation);
 
         return mutation;
@@ -1280,11 +1280,9 @@ public final class SchemaKeyspace
         builder.build();
     }
 
-    private static void dropMaterializedViewFromSchemaMutation(CFMetaData table, MaterializedViewDefinition materializedView, long timestamp, Mutation mutation)
+        private static void dropMaterializedViewFromSchemaMutation(CFMetaData table, MaterializedViewDefinition materializedView, long timestamp, Mutation mutation)
     {
         RowUpdateBuilder.deleteRow(MaterializedViews, timestamp, mutation, table.cfName, materializedView.viewName);
-        RowUpdateBuilder.deleteRow(SystemKeyspace.BuiltMaterializedViews, timestamp, mutation, materializedView.viewName); 
-        RowUpdateBuilder.deleteRow(SystemKeyspace.MaterializedViewsBuildsInProgress, timestamp, mutation, materializedView.viewName);
     }
 
     private static void addUpdatedMaterializedViewDefinitionToSchemaMutation(CFMetaData table, MaterializedViewDefinition materializedView, long timestamp, Mutation mutation)

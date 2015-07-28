@@ -45,6 +45,7 @@ import org.apache.cassandra.db.LivenessInfo;
 import org.apache.cassandra.db.RangeTombstone;
 import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.marshal.CompositeType;
+import org.apache.cassandra.db.partitions.AbstractThreadUnsafePartition;
 import org.apache.cassandra.db.rows.BufferCell;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.rows.CellPath;
@@ -92,24 +93,6 @@ public class TemporalRow
             value = value.reconcile(iterator.next());
 
         return ByteBufferUtil.compareUnsigned(initial.value, value.value) != 0 ? initial : null;
-    };
-
-    /**
-     * Returns the lastest value if it does not match
-     */
-    public static final Resolver newValueIfUpdated = cells -> {
-        Iterator<TemporalCell> iterator = cells.iterator();
-        if (!iterator.hasNext())
-            return null;
-        TemporalCell initial = iterator.next();
-        if (!iterator.hasNext())
-            return initial;
-
-        TemporalCell value = initial;
-        while (iterator.hasNext())
-            value = value.reconcile(iterator.next());
-
-        return value.isNew && ByteBufferUtil.compareUnsigned(initial.value, value.value) != 0 ? value : null;
     };
 
     public static final Resolver earliest = cells -> {
@@ -326,17 +309,19 @@ public class TemporalRow
         return null;
     }
 
-    public DeletionTime deletionTime(DeletionInfo deletionInfo)
+    public DeletionTime deletionTime(AbstractThreadUnsafePartition partition)
     {
-        if (deletionInfo.isLive())
-            return DeletionTime.LIVE;
-
+        DeletionInfo deletionInfo = partition.deletionInfo();
         if (!deletionInfo.getPartitionDeletion().isLive())
             return deletionInfo.getPartitionDeletion();
 
         Clustering baseClustering = baseClusteringBuilder().build();
         RangeTombstone clusterTombstone = deletionInfo.rangeCovering(baseClustering);
-        return clusterTombstone == null ? DeletionTime.LIVE : clusterTombstone.deletionTime();
+        if (clusterTombstone != null)
+            return clusterTombstone.deletionTime();
+
+        Row row = partition.getRow(baseClustering);
+        return row == null || row.deletion().isLive() ? DeletionTime.LIVE : row.deletion();
     }
 
     public Collection<org.apache.cassandra.db.rows.Cell> values(ColumnDefinition definition, Resolver resolver)

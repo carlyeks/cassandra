@@ -52,7 +52,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 public class MaterializedViewTest extends CQLTester
 {
     int protocolVersion = 4;
-    private List<String> materializedViews = new ArrayList<>();
+    private final List<String> materializedViews = new ArrayList<>();
 
     @BeforeClass
     public static void startup()
@@ -75,7 +75,8 @@ public class MaterializedViewTest extends CQLTester
     private void createView(String name, String query) throws Throwable
     {
         executeNet(protocolVersion, String.format(query, name));
-        // If exception is thrown, don't add to the list because it wasn't created
+        // If exception is thrown, the view will not be added to the list; since it shouldn't have been created, this is
+        // the desired behavior
         materializedViews.add(name);
     }
 
@@ -636,7 +637,6 @@ public class MaterializedViewTest extends CQLTester
         // accept strings for numbers that cannot be represented as doubles
         updateMV("INSERT INTO %s (k, decimalval) VALUES (?, fromJson(?))", 0, "\"123123.123123\"");
         assertRows(execute("SELECT k, decimalval FROM %s WHERE k = ?", 0), row(0, new BigDecimal("123123.123123")));
-        //assertRows(execute("SELECT k, asciival from mv_decimalval WHERE decimalval = fromJson(?)", "\"123123.123123\""), row(0, "ascii text"));
 
         updateMV("INSERT INTO %s (k, decimalval) VALUES (?, fromJson(?))", 0, "\"-1.23E-12\"");
         assertRows(execute("SELECT k, decimalval FROM %s WHERE k = ?", 0), row(0, new BigDecimal("-1.23E-12")));

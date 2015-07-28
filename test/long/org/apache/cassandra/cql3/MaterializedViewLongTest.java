@@ -18,11 +18,14 @@
 
 package org.apache.cassandra.cql3;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -37,13 +40,33 @@ import org.apache.cassandra.utils.WrappedRunnable;
 
 public class MaterializedViewLongTest extends CQLTester
 {
-    int protocolVersion = 3;
-
+    int protocolVersion = 4;
+    private final List<String> materializedViews = new ArrayList<>();
 
     @BeforeClass
     public static void startup()
     {
         requireNetwork();
+    }
+    @Before
+    public void begin()
+    {
+        materializedViews.clear();
+    }
+
+    @After
+    public void end() throws Throwable
+    {
+        for (String viewName : materializedViews)
+            executeNet(protocolVersion, "DROP MATERIALIZED VIEW " + viewName);
+    }
+
+    private void createView(String name, String query) throws Throwable
+    {
+        executeNet(protocolVersion, String.format(query, name));
+        // If exception is thrown, the view will not be added to the list; since it shouldn't have been created, this is
+        // the desired behavior
+        materializedViews.add(name);
     }
 
     @Test
@@ -59,9 +82,9 @@ public class MaterializedViewLongTest extends CQLTester
                     "c int," +
                     "PRIMARY KEY (a, b))");
 
-        dropTable("DROP MATERIALIZED VIEW IF EXISTS " + keyspace() + ".mv");
+        executeNet(protocolVersion, "USE " + keyspace());
 
-        executeNet(protocolVersion, "CREATE MATERIALIZED VIEW " + keyspace() + ".mv AS SELECT * FROM %s WHERE c IS NOT NULL AND a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (c, a, b)");
+        createView("mv", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE c IS NOT NULL AND a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (c, a, b)");
 
         CyclicBarrier semaphore = new CyclicBarrier(writers);
 
@@ -167,7 +190,5 @@ public class MaterializedViewLongTest extends CQLTester
         {
             throw new AssertionError(String.format("Single row had c = %d, expected %d", rows.get(0).getInt("c"), value));
         }
-
-        dropTable("DROP MATERIALIZED VIEW " + keyspace() + ".mv");
     }
 }

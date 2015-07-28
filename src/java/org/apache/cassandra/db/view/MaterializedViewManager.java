@@ -44,7 +44,6 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.OverloadedException;
 import org.apache.cassandra.exceptions.UnavailableException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
-import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
 

@@ -25,7 +25,6 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.collect.Iterables;
 
@@ -49,6 +48,7 @@ import org.apache.cassandra.db.RangeTombstone;
 import org.apache.cassandra.db.ReadCommand;
 import org.apache.cassandra.db.ReadOrderGroup;
 import org.apache.cassandra.db.SinglePartitionReadCommand;
+import org.apache.cassandra.db.Slice;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.partitions.AbstractThreadUnsafePartition;
 import org.apache.cassandra.db.partitions.PartitionIterator;
@@ -75,19 +75,32 @@ import org.apache.cassandra.service.pager.QueryPager;
  */
 public class MaterializedView
 {
+    /**
+     * The columns should all be updated together, so we use this object as group.
+     */
+    private static class MVColumns
+    {
+        //These are the base column definitions in terms of the *views* partitioning.
+        //Meaning we can see (for example) the partition key of the view contains a clustering key
+        //from the base table.
+        public final List<ColumnDefinition> partitionDefs;
+        public final List<ColumnDefinition> primaryKeyDefs;
+        public final List<ColumnDefinition> baseComplexColumns;
+
+        private MVColumns(List<ColumnDefinition> partitionDefs, List<ColumnDefinition> primaryKeyDefs, List<ColumnDefinition> baseComplexColumns)
+        {
+            this.partitionDefs = partitionDefs;
+            this.primaryKeyDefs = primaryKeyDefs;
+            this.baseComplexColumns = baseComplexColumns;
+        }
+    }
+
     public final String name;
 
-
     private final ColumnFamilyStore baseCfs;
-
     private ColumnFamilyStore _viewCfs = null;
 
-    //These are the base column definitions in terms of the *views* partitioning.
-    //Meaning we can see (for example) the partition key of the view contains a clustering key
-    //from the base table.
-    private final AtomicReference<List<ColumnDefinition>> partitionDefs = new AtomicReference<>();
-    private final AtomicReference<List<ColumnDefinition>> primaryKeyDefs = new AtomicReference<>();
-    private final AtomicReference<List<ColumnDefinition>> baseComplexColumns = new AtomicReference<>();
+    private MVColumns columns;
 
     private final boolean viewHasAllPrimaryKeys;
     private final boolean includeAll;
@@ -174,9 +187,7 @@ public class MaterializedView
             }
         }
 
-        this.partitionDefs.set(partitionDefs);
-        this.primaryKeyDefs.set(primaryKeyDefs);
-        this.baseComplexColumns.set(baseComplexColumns);
+        this.columns = new MVColumns(partitionDefs, primaryKeyDefs, baseComplexColumns);
 
         return partitionAllPrimaryKeyColumns && clusteringAllPrimaryKeyColumns;
     }
@@ -279,7 +290,7 @@ public class MaterializedView
      */
     private DecoratedKey viewPartitionKey(TemporalRow temporalRow, TemporalRow.Resolver resolver)
     {
-        List<ColumnDefinition> partitionDefs = this.partitionDefs.get();
+        List<ColumnDefinition> partitionDefs = this.columns.partitionDefs;
         Object[] partitionKey = new Object[partitionDefs.size()];
 
         for (int i = 0; i < partitionKey.length; i++)
@@ -309,7 +320,7 @@ public class MaterializedView
             return null;
 
         boolean hasUpdate = false;
-        List<ColumnDefinition> primaryKeyDefs = this.primaryKeyDefs.get();
+        List<ColumnDefinition> primaryKeyDefs = this.columns.primaryKeyDefs;
         for (ColumnDefinition viewPartitionKeys : primaryKeyDefs)
         {
             if (!viewPartitionKeys.isPrimaryKeyColumn() && temporalRow.clusteringValue(viewPartitionKeys, TemporalRow.oldValueIfUpdated) != null)
@@ -330,7 +341,7 @@ public class MaterializedView
     /**
      * @return Mutation which is the transformed base table mutation for the materialized view.
      */
-    private PartitionUpdate createUpdatesForInserts(TemporalRow temporalRow, boolean hasTombstone)
+    private PartitionUpdate createUpdatesForInserts(TemporalRow temporalRow)
     {
         TemporalRow.Resolver resolver = TemporalRow.latest;
 
@@ -384,7 +395,7 @@ public class MaterializedView
         List<Mutation> mutations = new ArrayList<>();
 
         // Check the complex columns to see if there are any which may have tombstones we need to create for the view
-        if (!baseComplexColumns.get().isEmpty())
+        if (!columns.baseComplexColumns.isEmpty())
         {
             for (Row row : partition)
             {
@@ -395,7 +406,7 @@ public class MaterializedView
 
                 assert temporalRow != null;
 
-                for (ColumnDefinition definition : baseComplexColumns.get())
+                for (ColumnDefinition definition : columns.baseComplexColumns)
                 {
                     ComplexColumnData columnData = row.getComplexColumnData(definition);
 
@@ -413,13 +424,14 @@ public class MaterializedView
             }
         }
 
+        ReadCommand command = null;
+
         if (!deletionInfo.isLive())
         {
             // We have to generate tombstones for all of the affected rows, but we don't have the information in order
             // to create them. This requires that we perform a read for the entire range that is being tombstoned, and
             // generate a tombstone for each. This may be slow, because a single range tombstone can cover up to an
             // entire partition of data which is not distributed on a single partition node.
-            ReadCommand command;
             DecoratedKey dk = rowSet.dk;
 
             if (deletionInfo.hasRanges())
@@ -433,16 +445,33 @@ public class MaterializedView
                     builder.addSlice(tombstone.deletedSlice());
                 }
 
-                if (!mutations.isEmpty())
-                    return mutations;
-
                 command = builder.build();
             }
             else
             {
                 command = SinglePartitionReadCommand.fullPartitionRead(baseCfs.metadata, rowSet.nowInSec, dk);
             }
+        }
 
+        if (command == null)
+        {
+            SinglePartitionSliceBuilder builder = null;
+            for (Row row : partition)
+            {
+                if (!row.deletion().isLive())
+                {
+                    if (builder == null)
+                        builder = new SinglePartitionSliceBuilder(baseCfs, rowSet.dk);
+                    builder.addSlice(Slice.make(row.clustering()));
+                }
+            }
+
+            if (builder != null)
+                command = builder.build();
+        }
+
+        if (command != null)
+        {
             QueryPager pager = command.getPager(null);
 
             // Add all of the rows which were recovered from the query to the row set
@@ -469,7 +498,7 @@ public class MaterializedView
             // for the view.
             for (TemporalRow temporalRow : rowSet)
             {
-                DeletionTime deletionTime = temporalRow.deletionTime(deletionInfo);
+                DeletionTime deletionTime = temporalRow.deletionTime(partition);
                 if (!deletionTime.isLive())
                 {
                     DecoratedKey value = viewPartitionKey(temporalRow, resolver);
@@ -523,7 +552,7 @@ public class MaterializedView
     private TemporalRow.Set separateRows(ByteBuffer key, AbstractThreadUnsafePartition partition)
     {
         Set<ColumnIdentifier> columns = new HashSet<>();
-        for (ColumnDefinition def : primaryKeyDefs.get())
+        for (ColumnDefinition def : this.columns.primaryKeyDefs)
             columns.add(def.name);
 
         TemporalRow.Set rowSet = new TemporalRow.Set(baseCfs, columns, key);
@@ -556,19 +585,17 @@ public class MaterializedView
         {
             // If we are building, there is no need to check for partition tombstones; those values will not be present
             // in the partition data
-            boolean hasTombstone = false;
             if (!isBuilding)
             {
                 PartitionUpdate partitionTombstone = createRangeTombstoneForRow(temporalRow);
-                hasTombstone = partitionTombstone != null;
-                if (hasTombstone)
+                if (partitionTombstone != null)
                 {
                     if (mutations == null) mutations = new LinkedList<>();
                     mutations.add(new Mutation(partitionTombstone));
                 }
             }
 
-            PartitionUpdate insert = createUpdatesForInserts(temporalRow, hasTombstone);
+            PartitionUpdate insert = createUpdatesForInserts(temporalRow);
             if (insert != null)
             {
                 if (mutations == null) mutations = new LinkedList<>();
