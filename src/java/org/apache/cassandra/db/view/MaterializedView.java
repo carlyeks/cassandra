@@ -69,6 +69,13 @@ import org.apache.cassandra.utils.FBUtilities;
  * A Materialized View copies data from a base table into a view table which can be queried independently from the
  * base. Every update which targets the base table must be fed through the {@link MaterializedViewManager} to ensure
  * that if a view needs to be updated, the updates are properly created and fed into the view.
+ *
+ * This class does the job of translating the base row to the view row.
+ *
+ * It handles reading existing state and figuring out what tombstones need to be generated.
+ *
+ * createMutations below is the "main method"
+ *
  */
 public class MaterializedView
 {
@@ -78,9 +85,14 @@ public class MaterializedView
     private final ColumnFamilyStore baseCfs;
 
     private ColumnFamilyStore _viewCfs = null;
+
+    //These are the base column definitions in terms of the *views* partitioning.
+    //Meaning we can see (for example) the partition key of the view contains a clustering key
+    //from the base table.
     private final AtomicReference<List<ColumnDefinition>> partitionDefs = new AtomicReference<>();
     private final AtomicReference<List<ColumnDefinition>> primaryKeyDefs = new AtomicReference<>();
     private final AtomicReference<List<ColumnDefinition>> baseComplexColumns = new AtomicReference<>();
+
     private final boolean viewHasAllPrimaryKeys;
     private final boolean includeAll;
     private MaterializedViewBuilder builder;
@@ -96,6 +108,12 @@ public class MaterializedView
         viewHasAllPrimaryKeys = updateDefinition(definition);
     }
 
+    /**
+     * Lazily fetch the CFS instance for the view.
+     * We do this lazily to avoid initilization issues.
+     *
+     * @return The views CFS instance
+     */
     public ColumnFamilyStore getViewCfs()
     {
         if (_viewCfs == null)
@@ -104,20 +122,33 @@ public class MaterializedView
         return _viewCfs;
     }
 
+
+    /**
+     * Lookup column definitions in the base table that correspond to the view columns (should be 1:1)
+     *
+     * Notify caller if all primary keys in the view are ALL primary keys in the base. We do this to simplify
+     * tombstone checks.
+     *
+     * @param columns a list of columns to lookup in the base table
+     * @param definitions lists to populate for the base table definitions
+     * @return true if all view PKs are also Base PKs
+     */
     private boolean resolveAndAddColumns(Iterable<ColumnIdentifier> columns, List<ColumnDefinition>... definitions)
     {
         boolean allArePrimaryKeys = true;
-        for (ColumnIdentifier identifier: columns)
+        for (ColumnIdentifier identifier : columns)
         {
             ColumnDefinition cdef = baseCfs.metadata.getColumnDefinition(identifier);
             assert cdef != null : "Could not resolve column " + identifier.toString();
 
-            for (List<ColumnDefinition> list: definitions) {
+            for (List<ColumnDefinition> list : definitions)
+            {
                 list.add(cdef);
             }
 
             allArePrimaryKeys = allArePrimaryKeys && cdef.isPrimaryKeyColumn();
         }
+
         return allArePrimaryKeys;
     }
 
@@ -191,6 +222,13 @@ public class MaterializedView
         return false;
     }
 
+    /**
+     * Creates the clustering columns for the view based on the specified row and resolver policy
+     *
+     * @param temporalRow The current row
+     * @param resolver The policy to use when selecting versions of cells use
+     * @return The clustering object to use for the view
+     */
     private Clustering viewClustering(TemporalRow temporalRow, TemporalRow.Resolver resolver)
     {
         CFMetaData viewCfm = getViewCfs().metadata;
