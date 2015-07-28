@@ -27,7 +27,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
-import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.collect.*;
 import com.google.common.primitives.Longs;
@@ -823,7 +822,7 @@ public class CassandraServer implements Cassandra.Iface
 
             LegacyLayout.LegacyCellName name = LegacyLayout.decodeCellName(metadata, column_parent.super_column, column.name);
             Cell cell = cellFromColumn(metadata, name, column);
-            PartitionUpdate update = PartitionUpdate.singleRowUpdate(metadata, dk, ArrayBackedRow.singleCellRow(name.clustering, cell));
+            PartitionUpdate update = PartitionUpdate.singleRowUpdate(metadata, dk, BTreeBackedRow.singleCellRow(name.clustering, cell));
 
             mutation = new org.apache.cassandra.db.Mutation(update);
         }
@@ -874,10 +873,15 @@ public class CassandraServer implements Cassandra.Iface
     {
         if (startSessionIfRequested())
         {
-            Map<String, String> traceParameters = ImmutableMap.of("key", ByteBufferUtil.bytesToHex(key),
-                                                                  "column_family", column_family,
-                                                                  "old", expected.toString(),
-                                                                  "updates", updates.toString());
+            ImmutableMap.Builder<String,String> builder = ImmutableMap.builder();
+            builder.put("key", ByteBufferUtil.bytesToHex(key));
+            builder.put("column_family", column_family);
+            builder.put("old", expected.toString());
+            builder.put("updates", updates.toString());
+            builder.put("consistency_level", commit_consistency_level.name());
+            builder.put("serial_consistency_level", serial_consistency_level.name());
+            Map<String,String> traceParameters = builder.build();
+
             Tracing.instance.begin("cas", traceParameters);
         }
         else
@@ -1314,7 +1318,7 @@ public class CassandraServer implements Cassandra.Iface
         }
         else if (column_path.super_column != null && column_path.column == null)
         {
-            Row row = ArrayBackedRow.emptyDeletedRow(new Clustering(column_path.super_column), new DeletionTime(timestamp, nowInSec));
+            Row row = BTreeBackedRow.emptyDeletedRow(new Clustering(column_path.super_column), new DeletionTime(timestamp, nowInSec));
             update = PartitionUpdate.singleRowUpdate(metadata, dk, row);
         }
         else
@@ -1324,7 +1328,7 @@ public class CassandraServer implements Cassandra.Iface
                 LegacyLayout.LegacyCellName name = LegacyLayout.decodeCellName(metadata, column_path.super_column, column_path.column);
                 CellPath path = name.collectionElement == null ? null : CellPath.create(name.collectionElement);
                 Cell cell = BufferCell.tombstone(name.column, timestamp, nowInSec, path);
-                update = PartitionUpdate.singleRowUpdate(metadata, dk, ArrayBackedRow.singleCellRow(name.clustering, cell));
+                update = PartitionUpdate.singleRowUpdate(metadata, dk, BTreeBackedRow.singleCellRow(name.clustering, cell));
             }
             catch (UnknownColumnException e)
             {
@@ -2109,7 +2113,7 @@ public class CassandraServer implements Cassandra.Iface
                 CellPath path = name.collectionElement == null ? null : CellPath.create(name.collectionElement);
                 Cell cell = BufferCell.live(metadata, name.column, FBUtilities.timestampMicros(), value, path);
 
-                PartitionUpdate update = PartitionUpdate.singleRowUpdate(metadata, dk, ArrayBackedRow.singleCellRow(name.clustering, cell));
+                PartitionUpdate update = PartitionUpdate.singleRowUpdate(metadata, dk, BTreeBackedRow.singleCellRow(name.clustering, cell));
 
                 org.apache.cassandra.db.Mutation mutation = new org.apache.cassandra.db.Mutation(update);
                 doInsert(consistency_level, Arrays.asList(new CounterMutation(mutation, ThriftConversion.fromThrift(consistency_level))));
@@ -2229,7 +2233,8 @@ public class CassandraServer implements Cassandra.Iface
             if (startSessionIfRequested())
             {
                 Tracing.instance.begin("execute_cql3_query",
-                                       ImmutableMap.of("query", queryString));
+                                       ImmutableMap.of("query", queryString,
+                                                       "consistency_level", cLevel.name()));
             }
             else
             {
@@ -2290,7 +2295,7 @@ public class CassandraServer implements Cassandra.Iface
         if (startSessionIfRequested())
         {
             // TODO we don't have [typed] access to CQL bind variables here.  CASSANDRA-4560 is open to add support.
-            Tracing.instance.begin("execute_prepared_cql3_query", Collections.<String, String>emptyMap());
+            Tracing.instance.begin("execute_prepared_cql3_query", ImmutableMap.of("consistency_level", cLevel.name()));
         }
         else
         {

@@ -42,6 +42,7 @@ import org.apache.cassandra.db.rows.UnfilteredRowIterators;
 import org.apache.cassandra.io.sstable.ISSTableScanner;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.SSTableWriter;
+import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.Pair;
 
 import org.apache.cassandra.utils.concurrent.Refs;
@@ -134,52 +135,67 @@ public class StreamReceiveTask extends StreamTask
             ColumnFamilyStore cfs = Keyspace.open(kscf.left).getColumnFamilyStore(kscf.right);
             boolean hasMaterializedViews = cfs.materializedViewManager.allViews().iterator().hasNext();
 
-            List<SSTableReader> readers = new ArrayList<>();
-            for (SSTableWriter writer : task.sstables)
-                readers.add(writer.finish(true));
-
-
-            //We have a special path for Materialized view.
-            //Since the MV requires cleaning up any pre-existing state, we must put
-            //All partitions through the same write path as normal mutations.
-            if (hasMaterializedViews)
+            try
             {
-                for (SSTableReader reader : readers)
+                List<SSTableReader> readers = new ArrayList<>();
+                for (SSTableWriter writer : task.sstables)
                 {
-
-                    try (ISSTableScanner scanner = reader.getScanner())
-                    {
-                        while (scanner.hasNext())
-                        {
-                            try (UnfilteredRowIterator rowIterator = scanner.next())
-                            {
-                                new Mutation(PartitionUpdate.fromIterator(rowIterator)).apply();
-                            }
-                        }
-                    }
-
-                    //Delete the sstable
-                    reader.selfRef().release();
+                    SSTableReader reader = writer.finish(true);
+                    readers.add(reader);
+                    task.txn.update(reader, false);
                 }
 
-                task.txn.finish();
-                task.sstables.clear();
-            }
-            else
-            {
-
-                task.txn.finish();
                 task.sstables.clear();
 
                 try (Refs<SSTableReader> refs = Refs.ref(readers))
                 {
-                    // add sstables and build secondary indexes
-                    cfs.addSSTables(readers);
-                    cfs.indexManager.maybeBuildSecondaryIndexes(readers, cfs.indexManager.allIndexesNames());
+                    //We have a special path for Materialized view.
+                    //Since the MV requires cleaning up any pre-existing state, we must put
+                    //all partitions through the same write path as normal mutations.
+                    //This also ensures any 2is are also updated
+                    if (hasMaterializedViews)
+                    {
+                        for (SSTableReader reader : readers)
+                        {
+                            try (ISSTableScanner scanner = reader.getScanner())
+                            {
+                                while (scanner.hasNext())
+                                {
+                                    try (UnfilteredRowIterator rowIterator = scanner.next())
+                                    {
+                                        new Mutation(PartitionUpdate.fromIterator(rowIterator)).apply();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        task.txn.finish();
+
+                        // add sstables and build secondary indexes
+                        cfs.addSSTables(readers);
+                        cfs.indexManager.maybeBuildSecondaryIndexes(readers, cfs.indexManager.allIndexesNames());
+                    }
+                }
+                catch (Throwable t)
+                {
+                    logger.error("Error applying streamed sstable: ", t);
+
+                    JVMStabilityInspector.inspectThrowable(t);
+                }
+                finally
+                {
+                    //We don't keep the streamed sstables since we've applied them manually
+                    //So we abort the txn and delete the streamed sstables
+                    if (hasMaterializedViews)
+                        task.txn.abort();
                 }
             }
-
-            task.session.taskCompleted(task);
+            finally
+            {
+                task.session.taskCompleted(task);
+            }
         }
     }
 

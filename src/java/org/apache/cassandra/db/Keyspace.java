@@ -42,6 +42,7 @@ import org.apache.cassandra.db.index.SecondaryIndexManager;
 import org.apache.cassandra.db.view.MaterializedViewManager;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
+import org.apache.cassandra.db.lifecycle.SSTableSet;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
 import org.apache.cassandra.schema.KeyspaceMetadata;
@@ -280,11 +281,11 @@ public class Keyspace
     /**
      * @return A list of open SSTableReaders
      */
-    public List<SSTableReader> getAllSSTables()
+    public List<SSTableReader> getAllSSTables(SSTableSet sstableSet)
     {
         List<SSTableReader> list = new ArrayList<>(columnFamilyStores.size());
         for (ColumnFamilyStore cfStore : columnFamilyStores.values())
-            list.addAll(cfStore.getSSTables());
+            Iterables.addAll(list, cfStore.getSSTables(sstableSet));
         return list;
     }
 

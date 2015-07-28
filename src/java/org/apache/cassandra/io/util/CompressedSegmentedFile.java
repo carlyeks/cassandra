@@ -29,6 +29,7 @@ import org.apache.cassandra.io.compress.CompressedRandomAccessReader;
 import org.apache.cassandra.io.compress.CompressedSequentialWriter;
 import org.apache.cassandra.io.compress.CompressedThrottledReader;
 import org.apache.cassandra.io.compress.CompressionMetadata;
+import org.apache.cassandra.utils.concurrent.Ref;
 
 public class CompressedSegmentedFile extends SegmentedFile implements ICompressedFile
 {
@@ -37,14 +38,14 @@ public class CompressedSegmentedFile extends SegmentedFile implements ICompresse
     private static int MAX_SEGMENT_SIZE = Integer.MAX_VALUE;
     private final TreeMap<Long, MappedByteBuffer> chunkSegments;
 
-    public CompressedSegmentedFile(ChannelProxy channel, CompressionMetadata metadata)
+    public CompressedSegmentedFile(ChannelProxy channel, int bufferSize, CompressionMetadata metadata)
     {
-        this(channel, metadata, createMappedSegments(channel, metadata));
+        this(channel, bufferSize, metadata, createMappedSegments(channel, metadata));
     }
 
-    public CompressedSegmentedFile(ChannelProxy channel, CompressionMetadata metadata, TreeMap<Long, MappedByteBuffer> chunkSegments)
+    public CompressedSegmentedFile(ChannelProxy channel, int bufferSize, CompressionMetadata metadata, TreeMap<Long, MappedByteBuffer> chunkSegments)
     {
-        super(new Cleanup(channel, metadata, chunkSegments), channel, metadata.dataLength, metadata.compressedFileLength);
+        super(new Cleanup(channel, metadata, chunkSegments), channel, bufferSize, metadata.dataLength, metadata.compressedFileLength);
         this.metadata = metadata;
         this.chunkSegments = chunkSegments;
     }
@@ -123,6 +124,12 @@ public class CompressedSegmentedFile extends SegmentedFile implements ICompresse
         return new CompressedSegmentedFile(this);
     }
 
+    public void addTo(Ref.IdentityCollection identities)
+    {
+        super.addTo(identities);
+        metadata.addTo(identities);
+    }
+
     public static class Builder extends SegmentedFile.Builder
     {
         protected final CompressedSequentialWriter writer;
@@ -144,9 +151,9 @@ public class CompressedSegmentedFile extends SegmentedFile implements ICompresse
             return writer.open(overrideLength);
         }
 
-        public SegmentedFile complete(ChannelProxy channel, long overrideLength)
+        public SegmentedFile complete(ChannelProxy channel, int bufferSize, long overrideLength)
         {
-            return new CompressedSegmentedFile(channel, metadata(channel.filePath(), overrideLength));
+            return new CompressedSegmentedFile(channel, bufferSize, metadata(channel.filePath(), overrideLength));
         }
     }
 

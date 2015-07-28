@@ -21,11 +21,10 @@ package org.apache.cassandra.db.view;
 import java.util.Collection;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import javax.annotation.Nullable;
 
-import com.google.common.base.Predicate;
+import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +38,8 @@ import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionInfo;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.compaction.OperationType;
+import org.apache.cassandra.db.lifecycle.SSTableSet;
+import org.apache.cassandra.db.lifecycle.View;
 import org.apache.cassandra.db.partitions.FilteredPartition;
 import org.apache.cassandra.db.partitions.PartitionIterator;
 import org.apache.cassandra.db.rows.RowIterator;
@@ -54,6 +55,7 @@ import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.NoSpamLogger;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.UUIDGen;
+import org.apache.cassandra.utils.concurrent.Refs;
 
 public class MaterializedViewBuilder extends CompactionInfo.Holder
 {
@@ -117,35 +119,43 @@ public class MaterializedViewBuilder extends CompactionInfo.Holder
         Iterable<Range<Token>> ranges = StorageService.instance.getLocalRanges(baseCfs.metadata.ksName);
         final Pair<Integer, Token> buildStatus = SystemKeyspace.getMaterializedViewBuildStatus(ksname, viewName);
         Token lastToken;
-        Collection<SSTableReader> sstables;
-        // Need to figure out where to start
+        Function<View, Iterable<SSTableReader>> function;
         if (buildStatus == null)
         {
-            int generation = Integer.MIN_VALUE;
             baseCfs.forceBlockingFlush();
-            sstables = baseCfs.getSSTables();
-            for (SSTableReader reader : sstables)
+            function = View.select(SSTableSet.CANONICAL);
+            int generation = Integer.MIN_VALUE;
+
+            try (Refs<SSTableReader> temp = baseCfs.selectAndReference(function).refs)
             {
-                generation = Math.max(reader.descriptor.generation, generation);
+                for (SSTableReader reader : temp)
+                {
+                    generation = Math.max(reader.descriptor.generation, generation);
+                }
             }
+
             SystemKeyspace.beginMaterializedViewBuild(ksname, viewName, generation);
             lastToken = null;
         }
         else
         {
-            sstables = Lists.newArrayList(Iterables.filter(baseCfs.getSSTables(), new Predicate<SSTableReader>()
+            function = new Function<View, Iterable<SSTableReader>>()
             {
-                @Override
-                public boolean apply(SSTableReader ssTableReader)
+                @Nullable
+                public Iterable<SSTableReader> apply(View view)
                 {
-                    return ssTableReader.descriptor.generation <= buildStatus.left;
+                    Iterable<SSTableReader> readers = View.select(SSTableSet.CANONICAL).apply(view);
+                    if (readers != null)
+                        return Iterables.filter(readers, ssTableReader -> ssTableReader.descriptor.generation <= buildStatus.left);
+                    return null;
                 }
-            }));
+            };
             lastToken = buildStatus.right;
         }
 
         prevToken = lastToken;
-        try (ReducingKeyIterator iter = new ReducingKeyIterator(sstables))
+        try (Refs<SSTableReader> sstables = baseCfs.selectAndReference(function).refs;
+             ReducingKeyIterator iter = new ReducingKeyIterator(sstables))
         {
             while (!isStopped && iter.hasNext())
             {
@@ -176,13 +186,7 @@ public class MaterializedViewBuilder extends CompactionInfo.Holder
         catch (Exception e)
         {
             final MaterializedViewBuilder builder = new MaterializedViewBuilder(baseCfs, view);
-            ScheduledExecutors.nonPeriodicTasks.schedule(new Runnable()
-                                                         {
-                                                             public void run()
-                                                             {
-                                                                 CompactionManager.instance.submitMaterializedViewBuilder(builder);
-                                                             }
-                                                         },
+            ScheduledExecutors.nonPeriodicTasks.schedule(() -> CompactionManager.instance.submitMaterializedViewBuilder(builder),
                                                          5,
                                                          TimeUnit.MINUTES);
             logger.warn("Materialized View failed to complete, sleeping 5 minutes before restarting", e);

@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Predicate;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Ordering;
 import com.google.common.primitives.Longs;
@@ -50,6 +51,7 @@ import org.apache.cassandra.dht.*;
 import org.apache.cassandra.io.FSError;
 import org.apache.cassandra.io.compress.CompressionMetadata;
 import org.apache.cassandra.io.sstable.*;
+import org.apache.cassandra.io.sstable.format.big.BigTableWriter;
 import org.apache.cassandra.io.sstable.metadata.*;
 import org.apache.cassandra.io.util.*;
 import org.apache.cassandra.metrics.RestorableMeter;
@@ -218,12 +220,12 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
      * @param sstables SSTables to calculate key count
      * @return estimated key count
      */
-    public static long getApproximateKeyCount(Collection<SSTableReader> sstables)
+    public static long getApproximateKeyCount(Iterable<SSTableReader> sstables)
     {
         long count = -1;
 
         // check if cardinality estimator is available for all SSTables
-        boolean cardinalityAvailable = !sstables.isEmpty() && Iterators.all(sstables.iterator(), new Predicate<SSTableReader>()
+        boolean cardinalityAvailable = !Iterables.isEmpty(sstables) && Iterables.all(sstables, new Predicate<SSTableReader>()
         {
             public boolean apply(SSTableReader sstable)
             {
@@ -413,8 +415,8 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         {
             if (!sstable.loadSummary(ibuilder, dbuilder))
                 sstable.buildSummary(false, ibuilder, dbuilder, false, Downsampling.BASE_SAMPLING_LEVEL);
-            sstable.ifile = ibuilder.complete(sstable.descriptor.filenameFor(Component.PRIMARY_INDEX));
-            sstable.dfile = dbuilder.complete(sstable.descriptor.filenameFor(Component.DATA));
+            sstable.ifile = ibuilder.buildIndex(sstable.descriptor, sstable.indexSummary);
+            sstable.dfile = dbuilder.buildData(sstable.descriptor, statsMetadata);
             sstable.bf = FilterFactory.AlwaysPresent;
             sstable.setup(true);
             return sstable;
@@ -718,9 +720,9 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             }
 
             if (components.contains(Component.PRIMARY_INDEX))
-                ifile = ibuilder.complete(descriptor.filenameFor(Component.PRIMARY_INDEX));
+                ifile = ibuilder.buildIndex(descriptor, indexSummary);
 
-            dfile = dbuilder.complete(descriptor.filenameFor(Component.DATA));
+            dfile = dbuilder.buildData(descriptor, sstableMetadata);
 
             // Check for an index summary that was downsampled even though the serialization format doesn't support
             // that.  If it was downsampled, rebuild it.  See CASSANDRA-8993 for details.
@@ -737,8 +739,8 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
                     SegmentedFile.Builder dbuilderRebuild = SegmentedFile.getBuilder(DatabaseDescriptor.getDiskAccessMode(), compression))
                 {
                     buildSummary(false, ibuilderRebuild, dbuilderRebuild, false, Downsampling.BASE_SAMPLING_LEVEL);
-                    ifile = ibuilderRebuild.complete(descriptor.filenameFor(Component.PRIMARY_INDEX));
-                    dfile = dbuilderRebuild.complete(descriptor.filenameFor(Component.DATA));
+                    ifile = ibuilderRebuild.buildIndex(descriptor, indexSummary);
+                    dfile = dbuilderRebuild.buildData(descriptor, sstableMetadata);
                     saveSummary(ibuilderRebuild, dbuilderRebuild);
                 }
             }
@@ -1069,6 +1071,14 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         replacement.last = last;
         replacement.isSuspect.set(isSuspect.get());
         return replacement;
+    }
+
+    public SSTableReader cloneWithRestoredStart(DecoratedKey restoredStart)
+    {
+        synchronized (tidy.global)
+        {
+            return cloneAndReplace(restoredStart, OpenReason.NORMAL);
+        }
     }
 
     // runOnClose must NOT be an anonymous or non-static inner class, nor must it retain a reference chain to this reader
@@ -2062,19 +2072,25 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         this.readMeter = tidy.global.readMeter = readMeter;
     }
 
+    public void addTo(Ref.IdentityCollection identities)
+    {
+        identities.add(this);
+        identities.add(tidy.globalRef);
+        dfile.addTo(identities);
+        ifile.addTo(identities);
+        bf.addTo(identities);
+        indexSummary.addTo(identities);
+
+    }
+
     /**
-     * One instance per SSTableReader we create. This references the type-shared tidy, which in turn references
-     * the globally shared tidy, i.e.
+     * One instance per SSTableReader we create.
      *
-     * InstanceTidier => DescriptorTypeTitdy => GlobalTidy
-     *
-     * We can create many InstanceTidiers (one for every time we reopen an sstable with MOVED_START for example), but there can only be
-     * one GlobalTidy for one single logical sstable.
+     * We can create many InstanceTidiers (one for every time we reopen an sstable with MOVED_START for example),
+     * but there can only be one GlobalTidy for one single logical sstable.
      *
      * When the InstanceTidier cleansup, it releases its reference to its GlobalTidy; when all InstanceTidiers
      * for that type have run, the GlobalTidy cleans up.
-     *
-     * For ease, we stash a direct reference to our global tidier
      */
     private static final class InstanceTidier implements Tidy
     {
