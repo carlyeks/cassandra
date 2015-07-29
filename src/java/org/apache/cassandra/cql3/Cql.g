@@ -272,6 +272,7 @@ cqlStatement returns [ParsedStatement stmt]
     | st37=revokeRoleStatement             { $stmt = st37; }
     | st38=createMaterializedViewStatement { $stmt = st38; }
     | st39=dropMaterializedViewStatement   { $stmt = st39; }
+    | st40=alterMaterializedViewStatement  { $stmt = st40; }
     ;
 
 /*
@@ -738,8 +739,10 @@ indexIdent returns [IndexTarget.Raw id]
 
 /**
  * CREATE MATERIALIZED VIEW <viewName> AS
- *  SELECT (<columns>|*) FROM (<columnName>)
- *  PRIMARY KEY (<columns>)
+ *  SELECT <columns>
+ *  FROM <CF>
+ *  WHERE <pkColumns> IS NOT NULL
+ *  PRIMARY KEY (<pkColumns>)
  *  WITH <property> = <value> AND ...;
  */
 createMaterializedViewStatement returns [CreateMaterializedViewStatement expr]
@@ -821,6 +824,18 @@ alterTableStatement returns [AlterTableStatement expr]
         $expr = new AlterTableStatement(cf, type, id, v, props, renames, isStatic);
     }
     ;
+
+alterMaterializedViewStatement returns [AlterMaterializedViewStatement expr]
+    @init {
+        CFPropDefs props = new CFPropDefs();
+    }
+    : K_ALTER K_MATERIALIZED K_VIEW name=columnFamilyName
+          K_WITH properties[props]
+    {
+        $expr = new AlterMaterializedViewStatement(name, props);
+    }
+    ;
+    
 
 /**
  * ALTER TYPE <name> ALTER <field> TYPE <newtype>;

@@ -805,6 +805,9 @@ public class CassandraServer implements Cassandra.Iface
         cState.hasColumnFamilyAccess(keyspace, column_parent.column_family, Permission.MODIFY);
 
         CFMetaData metadata = ThriftValidation.validateColumnFamily(keyspace, column_parent.column_family, false);
+        if (metadata.isMaterializedView())
+            throw new org.apache.cassandra.exceptions.InvalidRequestException("Cannot modify Materialized Views directly");
+
         ThriftValidation.validateKey(metadata, key);
         ThriftValidation.validateColumnParent(metadata, column_parent);
         // SuperColumn field is usually optional, but not when we're inserting
@@ -898,6 +901,9 @@ public class CassandraServer implements Cassandra.Iface
             cState.hasColumnFamilyAccess(keyspace, column_family, Permission.SELECT);
 
             CFMetaData metadata = ThriftValidation.validateColumnFamily(keyspace, column_family, false);
+            if (metadata.isMaterializedView())
+                throw new org.apache.cassandra.exceptions.InvalidRequestException("Cannot modify Materialized Views directly");
+
             ThriftValidation.validateKey(metadata, key);
             if (metadata.isSuper())
                 throw new org.apache.cassandra.exceptions.InvalidRequestException("CAS does not support supercolumns");
@@ -1090,6 +1096,9 @@ public class CassandraServer implements Cassandra.Iface
                 cState.hasColumnFamilyAccess(keyspace, cfName, Permission.MODIFY);
 
                 CFMetaData metadata = ThriftValidation.validateColumnFamily(keyspace, cfName);
+                if (metadata.isMaterializedView())
+                    throw new org.apache.cassandra.exceptions.InvalidRequestException("Cannot modify Materialized Views directly");
+
                 ThriftValidation.validateKey(metadata, key);
                 if (metadata.isCounter())
                     ThriftConversion.fromThrift(consistency_level).validateCounterForWrite(metadata);
@@ -1303,6 +1312,9 @@ public class CassandraServer implements Cassandra.Iface
         cState.hasColumnFamilyAccess(keyspace, column_path.column_family, Permission.MODIFY);
 
         CFMetaData metadata = ThriftValidation.validateColumnFamily(keyspace, column_path.column_family, isCommutativeOp);
+        if (metadata.isMaterializedView())
+            throw new org.apache.cassandra.exceptions.InvalidRequestException("Cannot modify Materialized Views directly");
+
         ThriftValidation.validateKey(metadata, key);
         ThriftValidation.validateColumnPathOrParent(metadata, column_path);
         if (isCommutativeOp)
@@ -2009,6 +2021,9 @@ public class CassandraServer implements Cassandra.Iface
         {
             String keyspace = cState.getKeyspace();
             cState.hasColumnFamilyAccess(keyspace, cfname, Permission.MODIFY);
+            CFMetaData metadata = ThriftValidation.validateColumnFamily(keyspace, cfname, true);
+            if (metadata.isMaterializedView())
+                throw new org.apache.cassandra.exceptions.InvalidRequestException("Cannot truncate Materialized Views");
 
             if (startSessionIfRequested())
             {
@@ -2094,6 +2109,9 @@ public class CassandraServer implements Cassandra.Iface
             cState.hasColumnFamilyAccess(keyspace, column_parent.column_family, Permission.MODIFY);
 
             CFMetaData metadata = ThriftValidation.validateColumnFamily(keyspace, column_parent.column_family, true);
+            if (metadata.isMaterializedView())
+                throw new org.apache.cassandra.exceptions.InvalidRequestException("Cannot modify Materialized Views directly");
+
             ThriftValidation.validateKey(metadata, key);
             ThriftConversion.fromThrift(consistency_level).validateCounterForWrite(metadata);
             ThriftValidation.validateColumnParent(metadata, column_parent);

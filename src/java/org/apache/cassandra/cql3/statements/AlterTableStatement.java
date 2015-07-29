@@ -78,11 +78,10 @@ public class AlterTableStatement extends SchemaAlteringStatement
 
     public boolean announceMigration(boolean isLocalOnly) throws RequestValidationException
     {
-        if (oType != Type.OPTS && Schema.instance.isMaterializedView(keyspace(), columnFamily()))
-            throw new InvalidRequestException("Materialized views can not be directly altered, except for table options");
-
-
         CFMetaData meta = validateColumnFamily(keyspace(), columnFamily());
+        if (meta.isMaterializedView())
+            throw new InvalidRequestException("Cannot use ALTER TABLE on Materialized View");
+
         CFMetaData cfm = meta.copy();
 
         CQL3Type validator = this.validator == null ? null : this.validator.prepare(keyspace());

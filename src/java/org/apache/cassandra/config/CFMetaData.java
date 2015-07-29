@@ -63,7 +63,7 @@ public final class CFMetaData
 {
     public enum Flag
     {
-        SUPER, COUNTER, DENSE, COMPOUND
+        SUPER, COUNTER, DENSE, COMPOUND, MATERIALIZEDVIEW
     }
 
     private static final Logger logger = LoggerFactory.getLogger(CFMetaData.class);
@@ -180,6 +180,7 @@ public final class CFMetaData
     private final boolean isCompound;
     private final boolean isSuper;
     private final boolean isCounter;
+    private final boolean isMaterializedView;
 
     public volatile ClusteringComparator comparator;  // bytes, long, timeuuid, utf8, etc. This is built directly from clusteringColumns
 
@@ -254,6 +255,7 @@ public final class CFMetaData
                        boolean isCounter,
                        boolean isDense,
                        boolean isCompound,
+                       boolean isMaterializedView,
                        List<ColumnDefinition> partitionKeyColumns,
                        List<ColumnDefinition> clusteringColumns,
                        PartitionColumns partitionColumns)
@@ -266,6 +268,7 @@ public final class CFMetaData
         this.isCompound = isCompound;
         this.isSuper = isSuper;
         this.isCounter = isCounter;
+        this.isMaterializedView = isMaterializedView;
 
         EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
         if (isSuper)
@@ -276,6 +279,8 @@ public final class CFMetaData
             flags.add(Flag.DENSE);
         if (isCompound)
             flags.add(Flag.COMPOUND);
+        if (isMaterializedView)
+            flags.add(Flag.MATERIALIZEDVIEW);
         this.flags = Sets.immutableEnumSet(flags);
 
         // A compact table should always have a clustering
@@ -322,6 +327,7 @@ public final class CFMetaData
                                     boolean isCompound,
                                     boolean isSuper,
                                     boolean isCounter,
+                                    boolean isMaterializedView,
                                     List<ColumnDefinition> columns)
     {
         List<ColumnDefinition> partitions = new ArrayList<>();
@@ -354,6 +360,7 @@ public final class CFMetaData
                               isCounter,
                               isDense,
                               isCompound,
+                              isMaterializedView,
                               partitions,
                               clusterings,
                               builder.build());
@@ -455,6 +462,7 @@ public final class CFMetaData
                                        isCounter(),
                                        isDense(),
                                        isCompound(),
+                                       isMaterializedView(),
                                        copy(partitionKeyColumns),
                                        copy(clusteringColumns),
                                        copy(partitionColumns)),
@@ -1338,6 +1346,11 @@ public final class CFMetaData
         return isCompound;
     }
 
+    public boolean isMaterializedView()
+    {
+        return isMaterializedView;
+    }
+
     public Serializers serializers()
     {
         return serializers;
@@ -1394,6 +1407,7 @@ public final class CFMetaData
         private final boolean isCompound;
         private final boolean isSuper;
         private final boolean isCounter;
+        private final boolean isMaterializedView;
 
         private UUID tableId;
 
@@ -1402,7 +1416,7 @@ public final class CFMetaData
         private final List<Pair<ColumnIdentifier, AbstractType>> staticColumns = new ArrayList<>();
         private final List<Pair<ColumnIdentifier, AbstractType>> regularColumns = new ArrayList<>();
 
-        private Builder(String keyspace, String table, boolean isDense, boolean isCompound, boolean isSuper, boolean isCounter)
+        private Builder(String keyspace, String table, boolean isDense, boolean isCompound, boolean isSuper, boolean isCounter, boolean isMaterializedView)
         {
             this.keyspace = keyspace;
             this.table = table;
@@ -1410,6 +1424,7 @@ public final class CFMetaData
             this.isCompound = isCompound;
             this.isSuper = isSuper;
             this.isCounter = isCounter;
+            this.isMaterializedView = isMaterializedView;
         }
 
         public static Builder create(String keyspace, String table)
@@ -1424,7 +1439,12 @@ public final class CFMetaData
 
         public static Builder create(String keyspace, String table, boolean isDense, boolean isCompound, boolean isSuper, boolean isCounter)
         {
-            return new Builder(keyspace, table, isDense, isCompound, isSuper, isCounter);
+            return new Builder(keyspace, table, isDense, isCompound, isSuper, isCounter, false);
+        }
+
+        public static Builder createView(String keyspace, String table)
+        {
+            return new Builder(keyspace, table, false, true, false, false, true);
         }
 
         public static Builder createDense(String keyspace, String table, boolean isCompound, boolean isCounter)
@@ -1547,6 +1567,7 @@ public final class CFMetaData
                                   isCounter,
                                   isDense,
                                   isCompound,
+                                  isMaterializedView,
                                   partitions,
                                   clusterings,
                                   builder.build());

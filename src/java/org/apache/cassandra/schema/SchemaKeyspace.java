@@ -1073,8 +1073,9 @@ public final class SchemaKeyspace
         boolean isCounter = flags.contains(CFMetaData.Flag.COUNTER);
         boolean isDense = flags.contains(CFMetaData.Flag.DENSE);
         boolean isCompound = flags.contains(CFMetaData.Flag.COMPOUND);
+        boolean isMaterializedView = flags.contains(CFMetaData.Flag.MATERIALIZEDVIEW);
 
-        CFMetaData cfm = CFMetaData.create(keyspace, table, id, isDense, isCompound, isSuper, isCounter, columns);
+        CFMetaData cfm = CFMetaData.create(keyspace, table, id, isDense, isCompound, isSuper, isCounter, isMaterializedView, columns);
 
         Map<String, String> compaction = new HashMap<>(row.getTextMap("compaction"));
         Class<? extends AbstractCompactionStrategy> compactionStrategyClass =
@@ -1280,7 +1281,7 @@ public final class SchemaKeyspace
         builder.build();
     }
 
-        private static void dropMaterializedViewFromSchemaMutation(CFMetaData table, MaterializedViewDefinition materializedView, long timestamp, Mutation mutation)
+    private static void dropMaterializedViewFromSchemaMutation(CFMetaData table, MaterializedViewDefinition materializedView, long timestamp, Mutation mutation)
     {
         RowUpdateBuilder.deleteRow(MaterializedViews, timestamp, mutation, table.cfName, materializedView.viewName);
     }

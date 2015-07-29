@@ -61,12 +61,12 @@ public class DropTableStatement extends SchemaAlteringStatement
     {
         try
         {
-            if (Schema.instance.isMaterializedView(keyspace(), columnFamily()))
-                throw new InvalidRequestException("Cannot use DROP TABLE on Materialized View");
-
             CFMetaData cfm = Schema.instance.getCFMetaData(keyspace(), columnFamily());
             if (cfm != null)
             {
+                if (cfm.isMaterializedView())
+                    throw new InvalidRequestException("Cannot use DROP TABLE on Materialized View");
+
                 boolean rejectDrop = false;
                 StringBuilder messageBuilder = new StringBuilder();
                 for (MaterializedViewDefinition def : cfm.getMaterializedViews().values())

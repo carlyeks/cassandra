@@ -118,13 +118,22 @@ public class MaterializedViewTest extends CQLTester
         try
         {
             executeNet(protocolVersion, "ALTER TABLE mv1_test ADD foo text");
-            Assert.fail("Should not be able to alter MV directly");
+            Assert.fail("Should not be able to use alter table with MV");
         }
         catch (Exception e)
         {
         }
 
-        executeNet(protocolVersion, "ALTER TABLE mv1_test WITH compaction = { 'class' : 'LeveledCompactionStrategy' }");
+        try
+        {
+            executeNet(protocolVersion, "ALTER TABLE mv1_test WITH compaction = { 'class' : 'LeveledCompactionStrategy' }");
+            Assert.fail("Should not be able to use alter table with MV");
+        }
+        catch (Exception e)
+        {
+        }
+
+        executeNet(protocolVersion, "ALTER MATERIALIZED VIEW mv1_test WITH compaction = { 'class' : 'LeveledCompactionStrategy' }");
 
         //Test alter add
         executeNet(protocolVersion, "ALTER TABLE %s ADD foo text");

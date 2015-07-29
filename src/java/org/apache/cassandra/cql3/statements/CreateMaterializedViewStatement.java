@@ -77,7 +77,6 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         if (!baseName.hasKeyspace())
             baseName.setKeyspace(keyspace(), true);
         state.hasKeyspaceAccess(keyspace(), Permission.CREATE);
-        state.hasColumnFamilyAccess(baseName.getKeyspace(), baseName.getColumnFamily(), Permission.SELECT);
     }
 
     public void validate(ClientState state) throws RequestValidationException
@@ -108,6 +107,8 @@ public class CreateMaterializedViewStatement extends SchemaAlteringStatement
         CFMetaData cfm = ThriftValidation.validateColumnFamily(baseName.getKeyspace(), baseName.getColumnFamily());
         if (cfm.isCounter())
             throw new InvalidRequestException("Materialized views are not supported on counter tables");
+        if (cfm.isMaterializedView())
+            throw new InvalidRequestException("Materialized views cannot be created against other materialized views");
 
         Set<ColumnIdentifier> included = new HashSet<>();
         for (RawSelector selector : selectClause)

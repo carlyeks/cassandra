@@ -402,7 +402,7 @@ public class MaterializedView
                 if (!row.hasComplexDeletion())
                     continue;
 
-                TemporalRow temporalRow = rowSet.getExistingUnit(row);
+                TemporalRow temporalRow = rowSet.getClustering(row.clustering());
 
                 assert temporalRow != null;
 
@@ -636,7 +636,7 @@ public class MaterializedView
                                            CFProperties properties)
     {
         CFMetaData.Builder viewBuilder = CFMetaData.Builder
-                                         .create(baseCf.ksName, definition.viewName);
+                                         .createView(baseCf.ksName, definition.viewName);
 
         ColumnDefinition nonPkTarget = null;
 

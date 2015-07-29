@@ -386,9 +386,9 @@ public class TemporalRow
             return clusteringToRow.values().iterator();
         }
 
-        public TemporalRow getExistingUnit(Row row)
+        public TemporalRow getClustering(Clustering clustering)
         {
-            return clusteringToRow.get(row.clustering());
+            return clusteringToRow.get(clustering);
         }
 
         public void addRow(Row row, boolean isNew)
