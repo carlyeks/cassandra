@@ -216,8 +216,6 @@ public class StorageProxy implements StorageProxyMBean
             consistencyForCommit.validateForCasCommit(keyspaceName);
 
             CFMetaData metadata = Schema.instance.getCFMetaData(keyspaceName, cfName);
-            if (!metadata.getMaterializedViews().isEmpty())
-                throw new InvalidRequestException("cas operations are disallowed on tables with materialized views");
 
             long timeout = TimeUnit.MILLISECONDS.toNanos(DatabaseDescriptor.getCasContentionTimeout());
             while (System.nanoTime() - start < timeout)
