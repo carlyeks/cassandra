@@ -194,7 +194,7 @@ public abstract class ModificationStatement implements CQLStatement
         if (hasMaterializedViews())
         {
             state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.SELECT);
-            for (MaterializedViewDefinition view : cfm.getMaterializedViews().values())
+            for (MaterializedViewDefinition view : cfm.getMaterializedViews())
                 state.hasColumnFamilyAccess(keyspace(), view.viewName, Permission.MODIFY);
         }
 

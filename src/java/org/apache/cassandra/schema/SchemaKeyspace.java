@@ -76,13 +76,13 @@ public final class SchemaKeyspace
     public static final String COLUMNS = "columns";
     public static final String DROPPED_COLUMNS = "dropped_columns";
     public static final String TRIGGERS = "triggers";
-    public static final String MATERIALIZEDVIEWS = "materializedviews";
+    public static final String MATERIALIZED_VIEWS = "materialized_views";
     public static final String TYPES = "types";
     public static final String FUNCTIONS = "functions";
     public static final String AGGREGATES = "aggregates";
 
     public static final List<String> ALL =
-        ImmutableList.of(KEYSPACES, TABLES, COLUMNS, TRIGGERS, MATERIALIZEDVIEWS, TYPES, FUNCTIONS, AGGREGATES);
+        ImmutableList.of(KEYSPACES, TABLES, COLUMNS, TRIGGERS, MATERIALIZED_VIEWS, TYPES, FUNCTIONS, AGGREGATES);
 
     private static final CFMetaData Keyspaces =
         compile(KEYSPACES,
@@ -154,16 +154,16 @@ public final class SchemaKeyspace
                 + "PRIMARY KEY ((keyspace_name), table_name, trigger_name))");
 
     private static final CFMetaData MaterializedViews =
-     compile(MATERIALIZEDVIEWS,
-             "materialized views definitions",
-             "CREATE TABLE %s ("
-              + "keyspace_name text,"
-              + "columnfamily_name text,"
-              + "view_name text,"
-              + "target_columns list<text>,"
-              + "clustering_columns list<text>,"
-              + "included_columns list<text>,"
-              + "PRIMARY KEY ((keyspace_name), columnfamily_name, view_name))");
+        compile(MATERIALIZED_VIEWS,
+                "materialized views definitions",
+                "CREATE TABLE %s ("
+                + "keyspace_name text,"
+                + "columnfamily_name text,"
+                + "view_name text,"
+                + "target_columns list<text>,"
+                + "clustering_columns list<text>,"
+                + "included_columns list<text>,"
+                + "PRIMARY KEY ((keyspace_name), columnfamily_name, view_name))");
 
     private static final CFMetaData Types =
         compile(TYPES,
@@ -846,7 +846,7 @@ public final class SchemaKeyspace
             for (TriggerMetadata trigger : table.getTriggers())
                 addTriggerToSchemaMutation(table, trigger, timestamp, mutation);
 
-            for (MaterializedViewDefinition materializedView: table.getMaterializedViews().values())
+            for (MaterializedViewDefinition materializedView: table.getMaterializedViews())
                 addMaterializedViewToSchemaMutation(table, materializedView, timestamp, mutation);
         }
     }
@@ -941,7 +941,7 @@ public final class SchemaKeyspace
         for (TriggerMetadata trigger : triggerDiff.entriesOnlyOnRight().values())
             addTriggerToSchemaMutation(newTable, trigger, timestamp, mutation);
 
-        MapDifference<String, MaterializedViewDefinition> materializedViewDiff = Maps.difference(oldTable.getMaterializedViews(), newTable.getMaterializedViews());
+        MapDifference<String, MaterializedViewDefinition> materializedViewDiff = materializedViewsDiff(oldTable.getMaterializedViews(), newTable.getMaterializedViews());
 
         // dropped materialized views
         for (MaterializedViewDefinition materializedView : materializedViewDiff.entriesOnlyOnLeft().values())
@@ -971,6 +971,17 @@ public final class SchemaKeyspace
         return Maps.difference(beforeMap, afterMap);
     }
 
+    private static MapDifference<String, MaterializedViewDefinition> materializedViewsDiff(MaterializedViews before, MaterializedViews after)
+    {
+        Map<String, MaterializedViewDefinition> beforeMap = new HashMap<>();
+        before.forEach(v -> beforeMap.put(v.viewName, v));
+
+        Map<String, MaterializedViewDefinition> afterMap = new HashMap<>();
+        after.forEach(v -> afterMap.put(v.viewName, v));
+
+        return Maps.difference(beforeMap, afterMap);
+    }
+
     public static Mutation makeDropTableMutation(KeyspaceMetadata keyspace, CFMetaData table, long timestamp)
     {
         // Include the serialized keyspace in case the target node missed a CREATE KEYSPACE migration (see CASSANDRA-5631).
@@ -984,7 +995,7 @@ public final class SchemaKeyspace
         for (TriggerMetadata trigger : table.getTriggers())
             dropTriggerFromSchemaMutation(table, trigger, timestamp, mutation);
 
-        for (MaterializedViewDefinition materializedView : table.getMaterializedViews().values())
+        for (MaterializedViewDefinition materializedView : table.getMaterializedViews())
             dropMaterializedViewFromSchemaMutation(table, materializedView, timestamp, mutation);
 
         return mutation;
@@ -1051,8 +1062,8 @@ public final class SchemaKeyspace
         Triggers triggers =
             readSchemaPartitionForTableAndApply(TRIGGERS, keyspace, table, SchemaKeyspace::createTriggersFromTriggersPartition);
 
-        Map<String, MaterializedViewDefinition> views =
-            readSchemaPartitionForTableAndApply(MATERIALIZEDVIEWS, keyspace, table, SchemaKeyspace::createMaterializedViewsFromMaterializedViewsPartition);
+        MaterializedViews views =
+            readSchemaPartitionForTableAndApply(MATERIALIZED_VIEWS, keyspace, table, SchemaKeyspace::createMaterializedViewsFromMaterializedViewsPartition);
 
         return createTableFromTableRowAndColumns(row, columns).droppedColumns(droppedColumns)
                                                               .triggers(triggers)
@@ -1312,16 +1323,16 @@ public final class SchemaKeyspace
      * @param partition storage-level partition containing the materialized view definitions
      * @return the list of processed MaterializedViewDefinitions
      */
-    private static Map<String, MaterializedViewDefinition> createMaterializedViewsFromMaterializedViewsPartition(RowIterator partition)
+    private static MaterializedViews createMaterializedViewsFromMaterializedViewsPartition(RowIterator partition)
     {
-        Map<String, MaterializedViewDefinition> views = new HashMap<>();
-        String query = String.format("SELECT * FROM %s.%s", NAME, MATERIALIZEDVIEWS);
+        MaterializedViews.Builder views = org.apache.cassandra.schema.MaterializedViews.builder();
+        String query = String.format("SELECT * FROM %s.%s", NAME, MATERIALIZED_VIEWS);
         for (UntypedResultSet.Row row : QueryProcessor.resultify(query, partition))
         {
             MaterializedViewDefinition mv = createMaterializedViewFromMaterializedViewRow(row);
-            views.put(mv.viewName, mv);
+            views.add(mv);
         }
-        return views;
+        return views.build();
     }
 
     private static MaterializedViewDefinition createMaterializedViewFromMaterializedViewRow(UntypedResultSet.Row row)

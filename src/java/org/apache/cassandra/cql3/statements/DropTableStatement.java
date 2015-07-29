@@ -69,7 +69,7 @@ public class DropTableStatement extends SchemaAlteringStatement
 
                 boolean rejectDrop = false;
                 StringBuilder messageBuilder = new StringBuilder();
-                for (MaterializedViewDefinition def : cfm.getMaterializedViews().values())
+                for (MaterializedViewDefinition def : cfm.getMaterializedViews())
                 {
                     if (rejectDrop)
                         messageBuilder.append(',');

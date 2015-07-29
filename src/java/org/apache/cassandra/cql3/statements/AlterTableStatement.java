@@ -156,7 +156,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
 
                 // Adding a column to a table which has an include all materialized view requires the column to be added
                 // to the materialized view as well
-                for (MaterializedViewDefinition mv : cfm.getMaterializedViews().values())
+                for (MaterializedViewDefinition mv : cfm.getMaterializedViews())
                 {
                     if (mv.includeAll)
                     {
@@ -220,7 +220,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 cfm.addOrReplaceColumnDefinition(def.withNewType(validatorType));
 
                 // We have to alter the schema of the materialized view table as well; it doesn't affect the definition however
-                for (MaterializedViewDefinition mv : cfm.getMaterializedViews().values())
+                for (MaterializedViewDefinition mv : cfm.getMaterializedViews())
                 {
                     if (!mv.includes(columnName)) continue;
                     // We have to use the pre-adjusted CFM, otherwise we can't resolve the Index
@@ -269,7 +269,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 // and definition.
                 boolean rejectAlter = false;
                 StringBuilder builder = new StringBuilder();
-                for (MaterializedViewDefinition mv : cfm.getMaterializedViews().values())
+                for (MaterializedViewDefinition mv : cfm.getMaterializedViews())
                 {
                     if (!mv.includes(columnName)) continue;
                     if (rejectAlter)
@@ -302,7 +302,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     cfm.renameColumn(from, to);
 
                     // If the materialized view includes a renamed column, it must be renamed in the index table and the definition.
-                    for (MaterializedViewDefinition mv : cfm.getMaterializedViews().values())
+                    for (MaterializedViewDefinition mv : cfm.getMaterializedViews())
                     {
                         if (!mv.includes(from)) continue;
 
@@ -314,7 +314,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                         MaterializedViewDefinition mvCopy = new MaterializedViewDefinition(mv);
                         mvCopy.renameColumn(from, to);
 
-                        cfm.replaceMaterializedView(mvCopy);
+                        cfm.materializedViews(cfm.getMaterializedViews().replace(mvCopy));
 
                         if (materializedViewUpdates == null)
                             materializedViewUpdates = new ArrayList<>();

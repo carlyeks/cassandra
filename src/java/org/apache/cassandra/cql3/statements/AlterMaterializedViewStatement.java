@@ -66,9 +66,6 @@ public class AlterMaterializedViewStatement extends SchemaAlteringStatement
 
         cfProps.validate();
 
-        if (meta.isCounter() && cfProps.getDefaultTimeToLive() > 0)
-            throw new InvalidRequestException("Cannot set default_time_to_live on a table with counters");
-
         cfProps.applyToCFMetadata(cfm);
         MigrationManager.announceColumnFamilyUpdate(cfm, false, isLocalOnly);
         return true;

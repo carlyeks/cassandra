@@ -98,7 +98,7 @@ public class MaterializedViewManager
     public void reload()
     {
         Map<String, MaterializedViewDefinition> newViewsByName = new HashMap<>();
-        for (MaterializedViewDefinition definition : baseCfs.metadata.getMaterializedViews().values())
+        for (MaterializedViewDefinition definition : baseCfs.metadata.getMaterializedViews())
         {
             newViewsByName.put(definition.viewName, definition);
         }

@@ -72,7 +72,7 @@ public class DropMaterializedViewStatement extends SchemaAlteringStatement
                 throw new ConfigurationException(String.format("Cannot drop materialized view '%s' in keyspace '%s' without base CF.", columnFamily(), keyspace()));
 
             CFMetaData updatedCfm = baseCfm.copy();
-            updatedCfm.removeMaterializedView(columnFamily());
+            updatedCfm.materializedViews(updatedCfm.getMaterializedViews().without(columnFamily()));
             MigrationManager.announceColumnFamilyUpdate(updatedCfm, false, isLocalOnly);
             MigrationManager.announceColumnFamilyDrop(keyspace(), columnFamily(), isLocalOnly);
             return true;
@@ -93,7 +93,7 @@ public class DropMaterializedViewStatement extends SchemaAlteringStatement
 
         for (CFMetaData cfm : ksm.tables)
         {
-            if (findMaterializedView(cfm) != null)
+            if (cfm.getMaterializedViews().get(columnFamily()).isPresent())
                 return cfm;
         }
 
@@ -101,14 +101,5 @@ public class DropMaterializedViewStatement extends SchemaAlteringStatement
             return null;
         else
             throw new InvalidRequestException("View '" + cfName + "' could not be found in any of the tables of keyspace '" + keyspace() + '\'');
-    }
-
-    /**
-     * If there is a materialized view already defined with this name, we return the definition associated with it,
-     * otherwise null.
-     */
-    private MaterializedViewDefinition findMaterializedView(CFMetaData cfm)
-    {
-        return cfm.getMaterializedViews().get(columnFamily());
     }
 }

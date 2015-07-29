@@ -50,6 +50,7 @@ import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.LZ4Compressor;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.schema.MaterializedViews;
 import org.apache.cassandra.schema.SchemaKeyspace;
 import org.apache.cassandra.schema.Triggers;
 import org.apache.cassandra.utils.*;
@@ -203,7 +204,7 @@ public final class CFMetaData
     private volatile SpeculativeRetry speculativeRetry = DEFAULT_SPECULATIVE_RETRY;
     private volatile Map<ByteBuffer, DroppedColumn> droppedColumns = new HashMap<>();
     private volatile Triggers triggers = Triggers.none();
-    private volatile Map<String, MaterializedViewDefinition> materializedViews = new HashMap<>();
+    private volatile MaterializedViews materializedViews = MaterializedViews.none();
 
     /*
      * All CQL3 columns definition are stored in the columnMetadata map.
@@ -246,7 +247,7 @@ public final class CFMetaData
     public CFMetaData speculativeRetry(SpeculativeRetry prop) {speculativeRetry = prop; return this;}
     public CFMetaData droppedColumns(Map<ByteBuffer, DroppedColumn> cols) {droppedColumns = cols; return this;}
     public CFMetaData triggers(Triggers prop) {triggers = prop; return this;}
-    public CFMetaData materializedViews(Map<String, MaterializedViewDefinition> prop) {materializedViews = prop; return this;}
+    public CFMetaData materializedViews(MaterializedViews prop) {materializedViews = prop; return this;}
 
     private CFMetaData(String keyspace,
                        String name,
@@ -315,7 +316,7 @@ public final class CFMetaData
             this.compactValueColumn = CompactTables.getCompactValueColumn(partitionColumns, isSuper());
     }
 
-    public Map<String, MaterializedViewDefinition> getMaterializedViews()
+    public MaterializedViews getMaterializedViews()
     {
         return materializedViews;
     }
@@ -506,7 +507,7 @@ public final class CFMetaData
                       .memtableFlushPeriod(oldCFMD.memtableFlushPeriod)
                       .droppedColumns(new HashMap<>(oldCFMD.droppedColumns))
                       .triggers(oldCFMD.triggers)
-                      .materializedViews(new HashMap<>(oldCFMD.materializedViews));
+                      .materializedViews(oldCFMD.materializedViews);
     }
 
     /**
@@ -1220,23 +1221,6 @@ public final class CFMetaData
         return removed;
     }
 
-    public void addMaterializedView(MaterializedViewDefinition def)
-    {
-        if (materializedViews.containsKey(def.viewName))
-            throw new InvalidRequestException(String.format("Cannot create materialized view %s, a materialized view with the same name already exists", def.viewName));
-        materializedViews.put(def.viewName, def);
-    }
-
-    public void removeMaterializedView(String name)
-    {
-        materializedViews.remove(name);
-    }
-
-    public void replaceMaterializedView(MaterializedViewDefinition def)
-    {
-        materializedViews.put(def.viewName, def);
-    }
-
     public void recordColumnDrop(ColumnDefinition def)
     {
         droppedColumns.put(def.name.bytes, new DroppedColumn(def.name.toString(), def.type, FBUtilities.timestampMicros()));
@@ -1395,7 +1379,7 @@ public final class CFMetaData
             .append("speculativeRetry", speculativeRetry)
             .append("droppedColumns", droppedColumns)
             .append("triggers", triggers)
-            .append("materializedViews", materializedViews.values())
+            .append("materializedViews", materializedViews)
             .toString();
     }
 
