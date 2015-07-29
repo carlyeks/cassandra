@@ -92,9 +92,9 @@ public class StorageProxy implements StorageProxyMBean
     private static final ClientRequestMetrics readMetrics = new ClientRequestMetrics("Read");
     private static final ClientRequestMetrics rangeMetrics = new ClientRequestMetrics("RangeSlice");
     private static final ClientRequestMetrics writeMetrics = new ClientRequestMetrics("Write");
-    private static final ClientRequestMetrics mvWriteMetrics = new ClientRequestMetrics("MVWrite");
     private static final CASClientRequestMetrics casWriteMetrics = new CASClientRequestMetrics("CASWrite");
     private static final CASClientRequestMetrics casReadMetrics = new CASClientRequestMetrics("CASRead");
+    private static final MVWriteMetrics mvWriteMetrics = new MVWriteMetrics("MVWrite");
 
     private static final double CONCURRENT_SUBREQUESTS_MARGIN = 0.10;
 
@@ -662,15 +662,14 @@ public class StorageProxy implements StorageProxyMBean
                 Token tk = mutation.key().getToken();
                 List<InetAddress> naturalEndpoints = Lists.newArrayList(MaterializedViewUtils.getViewNaturalEndpoint(keyspaceName, baseToken, tk));
 
-                WriteResponseHandlerWrapper wrapper = wrapBatchResponseHandler(mutation,
-                                                                               consistencyLevel,
-                                                                               consistencyLevel,
-                                                                               naturalEndpoints,
-                                                                               WriteType.BATCH,
-                                                                               cleanup);
+                WriteResponseHandlerWrapper wrapper = wrapMVBatchResponseHandler(mutation,
+                                                                                 consistencyLevel,
+                                                                                 consistencyLevel,
+                                                                                 naturalEndpoints,
+                                                                                 WriteType.BATCH,
+                                                                                 cleanup);
 
                 wrappers.add(wrapper);
-
 
                 //Apply to local batchlog memtable in this thread
                 BatchlogManager.getBatchlogMutationFor(mutations, batchUUID, MessagingService.current_version).apply();
@@ -946,7 +945,7 @@ public class StorageProxy implements StorageProxyMBean
         return responseHandler;
     }
 
-    // same as above except does not initiate writes (but does perform availability checks).
+    // same as performWrites except does not initiate writes (but does perform availability checks).
     private static WriteResponseHandlerWrapper wrapBatchResponseHandler(Mutation mutation,
                                                                         ConsistencyLevel consistency_level,
                                                                         ConsistencyLevel batchConsistencyLevel,
@@ -964,13 +963,16 @@ public class StorageProxy implements StorageProxyMBean
         return new WriteResponseHandlerWrapper(batchHandler, mutation);
     }
 
-    // same as above except does not initiate writes (but does perform availability checks).
-    private static WriteResponseHandlerWrapper wrapBatchResponseHandler(Mutation mutation,
-                                                                        ConsistencyLevel consistency_level,
-                                                                        ConsistencyLevel batchConsistencyLevel,
-                                                                        List<InetAddress> naturalEndpoints,
-                                                                        WriteType writeType,
-                                                                        BatchlogResponseHandler.BatchlogCleanup cleanup)
+    /**
+     * Same as performWrites except does not initiate writes (but does perform availability checks).
+     * Keeps track of MVWriteMetrics
+     */
+    private static WriteResponseHandlerWrapper wrapMVBatchResponseHandler(Mutation mutation,
+                                                                          ConsistencyLevel consistency_level,
+                                                                          ConsistencyLevel batchConsistencyLevel,
+                                                                          List<InetAddress> naturalEndpoints,
+                                                                          WriteType writeType,
+                                                                          BatchlogResponseHandler.BatchlogCleanup cleanup)
     {
         Keyspace keyspace = Keyspace.open(mutation.getKeyspaceName());
         AbstractReplicationStrategy rs = keyspace.getReplicationStrategy();
@@ -978,7 +980,7 @@ public class StorageProxy implements StorageProxyMBean
         Token tk = mutation.key().getToken();
         Collection<InetAddress> pendingEndpoints = StorageService.instance.getTokenMetadata().pendingEndpointsFor(tk, keyspaceName);
         AbstractWriteResponseHandler<IMutation> writeHandler = rs.getWriteResponseHandler(naturalEndpoints, pendingEndpoints, consistency_level, null, writeType);
-        BatchlogResponseHandler<IMutation> batchHandler = new BatchlogResponseHandler<>(writeHandler, batchConsistencyLevel.blockFor(keyspace), cleanup);
+        BatchlogResponseHandler<IMutation> batchHandler = new MVWriteMetricsWrapped(writeHandler, batchConsistencyLevel.blockFor(keyspace), cleanup);
         return new WriteResponseHandlerWrapper(batchHandler, mutation);
     }
 
@@ -2276,6 +2278,24 @@ public class StorageProxy implements StorageProxyMBean
                           AbstractWriteResponseHandler<IMutation> responseHandler,
                           String localDataCenter,
                           ConsistencyLevel consistencyLevel) throws OverloadedException;
+    }
+
+    /**
+     * This class captures metrics for materialized views writes.
+     */
+    private static class MVWriteMetricsWrapped extends BatchlogResponseHandler<IMutation>
+    {
+        public MVWriteMetricsWrapped(AbstractWriteResponseHandler<IMutation> writeHandler, int i, BatchlogCleanup cleanup)
+        {
+            super(writeHandler, i, cleanup);
+            mvWriteMetrics.viewReplicasAttempted.inc(totalEndpoints());
+        }
+
+        public void response(MessageIn<IMutation> msg)
+        {
+            super.response(msg);
+            mvWriteMetrics.viewReplicasSuccess.inc();
+        }
     }
 
     /**
