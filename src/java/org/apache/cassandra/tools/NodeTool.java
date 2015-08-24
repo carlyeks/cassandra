@@ -93,6 +93,7 @@ public class NodeTool
                 ProxyHistograms.class,
                 Rebuild.class,
                 Refresh.class,
+                RefreshSizeEstimates.class,
                 RemoveNode.class,
                 Assassinate.class,
                 Repair.class,
