@@ -18,6 +18,8 @@
 package org.apache.cassandra.db;
 
 import java.util.*;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
@@ -47,10 +49,29 @@ public class SizeEstimatesRecorder extends MigrationListener implements Runnable
     private static final Logger logger = LoggerFactory.getLogger(SizeEstimatesRecorder.class);
 
     public static final SizeEstimatesRecorder instance = new SizeEstimatesRecorder();
+    private ScheduledThreadPoolExecutor executor;
+    private long delay;
+    private Future<?> scheduled;
 
     private SizeEstimatesRecorder()
     {
         MigrationManager.instance.register(this);
+    }
+
+    public void schedule(ScheduledThreadPoolExecutor scheduler, int initialDelay, int delay, TimeUnit timeUnit)
+    {
+        this.executor = scheduler;
+        this.delay = TimeUnit.MILLISECONDS.convert(delay, timeUnit);
+        schedule(TimeUnit.MILLISECONDS.convert(initialDelay, timeUnit));
+    }
+
+    public void runOnce()
+    {
+        if (scheduled != null)
+            scheduled.cancel(false);
+
+        run();
+        schedule(delay);
     }
 
     public void run()
@@ -113,6 +134,17 @@ public class SizeEstimatesRecorder extends MigrationListener implements Runnable
 
         // atomically update the estimates.
         SystemKeyspace.updateSizeEstimates(table.metadata.ksName, table.metadata.cfName, estimates);
+    }
+
+    /**
+     * Schedules the SizeEstimatesTask on the optional tasks executor
+     * @param initialDelay
+     */
+    private void schedule(long initialDelay)
+    {
+        if (scheduled != null)
+            scheduled.cancel(false);
+        scheduled = this.executor.scheduleWithFixedDelay(this, initialDelay, delay, TimeUnit.MILLISECONDS);
     }
 
     private long estimatePartitionsCount(Collection<SSTableReader> sstables, Range<Token> range)
