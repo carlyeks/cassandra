@@ -74,9 +74,9 @@ public class TemporalRow
         TemporalCell resolve(TemporalCell.Versions cellVersions);
     }
 
-    public static final Resolver oldValueIfUpdated = cellVersions -> cellVersions.getOldCellIfUpdated();
-    public static final Resolver earliest = cellVersions -> cellVersions.getEarliestCell();
-    public static final Resolver latest = cellVersions -> cellVersions.getLatestCell();
+    public static final Resolver oldValueIfUpdated = TemporalCell.Versions::getOldCellIfUpdated;
+    public static final Resolver earliest = TemporalCell.Versions::getEarliestCell;
+    public static final Resolver latest = TemporalCell.Versions::getLatestCell;
 
     private static class TemporalCell
     {
@@ -219,6 +219,17 @@ public class TemporalRow
                     existingCell = cell;
                     numSet = newCell == null ? 1 : 2;
                 }
+            }
+
+            public void addToRow(TemporalRow row, ColumnIdentifier column, CellPath path)
+            {
+                if (existingCell != null)
+                    row.addColumnValue(column, path, existingCell.timestamp, existingCell.ttl,
+                                       existingCell.localDeletionTime, existingCell.value, existingCell.isNew);
+
+                if (newCell != null)
+                    row.addColumnValue(column, path, newCell.timestamp, newCell.ttl,
+                                       newCell.localDeletionTime, newCell.value, newCell.isNew);
             }
         }
     }
@@ -491,15 +502,7 @@ public class TemporalRow
                 {
                     TemporalCell.Versions cellVersions = cellPathEntry.getValue();
 
-                    TemporalCell cell = cellVersions.existingCell;
-                    if (cell != null)
-                        newRow.addColumnValue(entry.getKey(), cellPathEntry.getKey(), cell.timestamp,
-                                              cell.ttl, cell.localDeletionTime, cell.value, cell.isNew);
-
-                    cell = cellVersions.newCell;
-                    if (cell != null)
-                        newRow.addColumnValue(entry.getKey(), cellPathEntry.getKey(), cell.timestamp,
-                                              cell.ttl, cell.localDeletionTime, cell.value, cell.isNew);
+                    cellVersions.addToRow(newRow, entry.getKey(), cellPathEntry.getKey());
                 }
             }
         }
