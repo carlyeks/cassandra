@@ -39,7 +39,7 @@ public class StageManager
 {
     private static final Logger logger = LoggerFactory.getLogger(StageManager.class);
 
-    private static final EnumMap<Stage, TracingAwareExecutorService> stages = new EnumMap<Stage, TracingAwareExecutorService>(Stage.class);
+    private static final EnumMap<Stage, LocalAwareExecutorService> stages = new EnumMap<Stage, LocalAwareExecutorService>(Stage.class);
 
     public static final long KEEPALIVE = 60; // seconds to keep "extra" threads alive for when idle
 
@@ -89,7 +89,7 @@ public class StageManager
                                                 stage.getJmxType());
     }
 
-    private static TracingAwareExecutorService multiThreadedLowSignalStage(Stage stage, int numThreads)
+    private static LocalAwareExecutorService multiThreadedLowSignalStage(Stage stage, int numThreads)
     {
         return SharedExecutorPool.SHARED.newExecutor(numThreads, Integer.MAX_VALUE, stage.getJmxType(), stage.getJmxName());
     }
@@ -98,7 +98,7 @@ public class StageManager
      * Retrieve a stage from the StageManager
      * @param stage name of the stage to be retrieved.
      */
-    public static TracingAwareExecutorService getStage(Stage stage)
+    public static LocalAwareExecutorService getStage(Stage stage)
     {
         return stages.get(stage);
     }
@@ -118,16 +118,16 @@ public class StageManager
      * A TPE that disallows submit so that we don't need to worry about unwrapping exceptions on the
      * tracing stage.  See CASSANDRA-1123 for background.
      */
-    private static class ExecuteOnlyExecutor extends ThreadPoolExecutor implements TracingAwareExecutorService
+    private static class ExecuteOnlyExecutor extends ThreadPoolExecutor implements LocalAwareExecutorService
     {
         public ExecuteOnlyExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, BlockingQueue<Runnable> workQueue, ThreadFactory threadFactory, RejectedExecutionHandler handler)
         {
             super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory, handler);
         }
 
-        public void execute(Runnable command, TraceState state)
+        public void execute(Runnable command, ExecutorLocal.Value[] values)
         {
-            assert state == null;
+            assert values == null;
             super.execute(command);
         }
 

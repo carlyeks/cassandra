@@ -341,12 +341,12 @@ public class SelectStatement implements CQLStatement
         if (!restrictions.hasPartitionKeyRestrictions())
         {
             logger.warn("Aggregation query used without partition key");
-            ClientWarn.warn("Aggregation query used without partition key");
+            ClientWarn.instance.warn("Aggregation query used without partition key");
         }
         else if (restrictions.keyIsInRelation())
         {
             logger.warn("Aggregation query used on multiple partition keys (IN restriction)");
-            ClientWarn.warn("Aggregation query used on multiple partition keys (IN restriction)");
+            ClientWarn.instance.warn("Aggregation query used on multiple partition keys (IN restriction)");
         }
 
         Selection.ResultSetBuilder result = selection.resultSetBuilder(parameters.isJson);

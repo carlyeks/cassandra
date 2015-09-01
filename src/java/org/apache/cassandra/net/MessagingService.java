@@ -40,10 +40,12 @@ import com.google.common.collect.Sets;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.apache.cassandra.concurrent.ExecutorLocal;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
-import org.apache.cassandra.concurrent.TracingAwareExecutorService;
+import org.apache.cassandra.concurrent.LocalAwareExecutorService;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.db.*;
@@ -794,10 +796,12 @@ public final class MessagingService implements MessagingServiceMBean
                 return;
 
         Runnable runnable = new MessageDeliveryTask(message, id, timestamp, isCrossNodeTimestamp);
-        TracingAwareExecutorService stage = StageManager.getStage(message.getMessageType());
+        LocalAwareExecutorService stage = StageManager.getStage(message.getMessageType());
         assert stage != null : "No stage for message type " + message.verb;
 
-        stage.execute(runnable, state);
+        ExecutorLocal.Value[] values = ExecutorLocal.Value.replace(ExecutorLocal.Value.forAll(),
+                                                                   new ExecutorLocal.Value<>(Tracing.instance, state));
+        stage.execute(runnable, values);
     }
 
     public void setCallbackForTests(int messageId, CallbackInfo callback)
