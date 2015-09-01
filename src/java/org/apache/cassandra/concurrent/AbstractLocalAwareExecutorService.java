@@ -36,9 +36,9 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
 
 import static org.apache.cassandra.tracing.Tracing.isTracing;
 
-public abstract class AbstractTracingAwareExecutorService implements TracingAwareExecutorService
+public abstract class AbstractLocalAwareExecutorService implements LocalAwareExecutorService
 {
-    private static final Logger logger = LoggerFactory.getLogger(AbstractTracingAwareExecutorService.class);
+    private static final Logger logger = LoggerFactory.getLogger(AbstractLocalAwareExecutorService.class);
 
     protected abstract void addTask(FutureTask<?> futureTask);
     protected abstract void onCompletion();
@@ -82,16 +82,16 @@ public abstract class AbstractTracingAwareExecutorService implements TracingAwar
 
     protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result)
     {
-        return newTaskFor(runnable, result, Tracing.instance.get());
+        return newTaskFor(runnable, result, ExecutorLocal.Value.forAll());
     }
 
-    protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result, TraceState traceState)
+    protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result, ExecutorLocal.Value[] values)
     {
-        if (traceState != null)
+        if (ExecutorLocal.Value.hasValue(values))
         {
-            if (runnable instanceof TraceSessionFutureTask)
-                return (TraceSessionFutureTask<T>) runnable;
-            return new TraceSessionFutureTask<T>(runnable, result, traceState);
+            if (runnable instanceof LocalSessionFutureTask)
+                return (LocalSessionFutureTask<T>) runnable;
+            return new LocalSessionFutureTask<T>(runnable, result, values);
         }
         if (runnable instanceof FutureTask)
             return (FutureTask<T>) runnable;
@@ -102,42 +102,47 @@ public abstract class AbstractTracingAwareExecutorService implements TracingAwar
     {
         if (isTracing())
         {
-            if (callable instanceof TraceSessionFutureTask)
-                return (TraceSessionFutureTask<T>) callable;
-            return new TraceSessionFutureTask<T>(callable, Tracing.instance.get());
+            if (callable instanceof LocalSessionFutureTask)
+                return (LocalSessionFutureTask<T>) callable;
+            return new LocalSessionFutureTask<T>(callable, ExecutorLocal.Value.forAll());
         }
         if (callable instanceof FutureTask)
             return (FutureTask<T>) callable;
         return new FutureTask<>(callable);
     }
 
-    private class TraceSessionFutureTask<T> extends FutureTask<T>
+    private class LocalSessionFutureTask<T> extends FutureTask<T>
     {
-        private final TraceState state;
+        private final ExecutorLocal.Value[] values;
 
-        public TraceSessionFutureTask(Callable<T> callable, TraceState state)
+        public LocalSessionFutureTask(Callable<T> callable, ExecutorLocal.Value[] values)
         {
             super(callable);
-            this.state = state;
+            this.values = values;
         }
 
-        public TraceSessionFutureTask(Runnable runnable, T result, TraceState state)
+        public LocalSessionFutureTask(Runnable runnable, T result, ExecutorLocal.Value[] values)
         {
             super(runnable, result);
-            this.state = state;
+            this.values = values;
         }
 
         public void run()
         {
-            TraceState oldState = Tracing.instance.get();
-            Tracing.instance.set(state);
+            ExecutorLocal.Value[] old = new ExecutorLocal.Value[values.length];
+            for (int i = 0; i < values.length; i++)
+            {
+                old[i] = new ExecutorLocal.Value(values[i].local);
+                values[i].set();
+            }
             try
             {
                 super.run();
             }
             finally
             {
-                Tracing.instance.set(oldState);
+                for (ExecutorLocal.Value value : old)
+                    value.set();
             }
         }
     }
@@ -219,11 +224,11 @@ public abstract class AbstractTracingAwareExecutorService implements TracingAwar
 
     public void execute(Runnable command)
     {
-        addTask(newTaskFor(command, null));
+        addTask(newTaskFor(command, ExecutorLocal.Value.forAll()));
     }
 
-    public void execute(Runnable command, TraceState state)
+    public void execute(Runnable command, ExecutorLocal.Value[] values)
     {
-        addTask(newTaskFor(command, null, state));
+        addTask(newTaskFor(command, null, values));
     }
 }
