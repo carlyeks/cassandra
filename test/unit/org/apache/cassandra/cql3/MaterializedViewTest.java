@@ -136,6 +136,31 @@ public class MaterializedViewTest extends CQLTester
     }
 
     @Test
+    public void testPrimaryKeyIsNotNull() throws Throwable{
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "asciival ascii, " +
+                    "bigintval bigint, " +
+                    "PRIMARY KEY((k, asciival)))");
+
+        // Must include "IS NOT NULL" for primary keys
+        assertInvalid("CREATE MATERIALIZED VIEW mv_test AS SELECT * FROM %s");
+        // Must include both when the partition key is composite
+        assertInvalid("CREATE MATERIALIZED VIEW mv_test AS SELECT * FROM %s WHERE bigintval IS NOT NULL AND asciival IS NOT NULL PRIMARY KEY (bigintval, k, asciival)");
+
+        dropTable("DROP TABLE %s");
+
+        createTable("CREATE TABLE %s (" +
+                    "k int, " +
+                    "asciival ascii, " +
+                    "bigintval bigint, " +
+                    "PRIMARY KEY(k, asciival))");
+        assertInvalid("CREATE MATERIALIZED VIEW mv_test AS SELECT * FROM %s");
+        // Can omit "k IS NOT NULL" because we have a sinlge partition key
+        createView("mv_test", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE bigintval IS NOT NULL AND asciival IS NOT NULL PRIMARY KEY (bigintval, k, asciival)");
+    }
+
+    @Test
     public void testAccessAndSchema() throws Throwable
     {
         createTable("CREATE TABLE %s (" +
