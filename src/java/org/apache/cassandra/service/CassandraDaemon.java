@@ -315,6 +315,16 @@ public class CassandraDaemon
         }
 
         Keyspace.setInitialized();
+
+        String storedRack = SystemKeyspace.getRack();
+        if (storedRack != null)
+        {
+            String currentRack = DatabaseDescriptor.getEndpointSnitch().getRack(FBUtilities.getBroadcastAddress());
+            if (!storedRack.equals(currentRack))
+                throw new AssertionError("Cannot start node if snitch's rack differs from previous rack. " +
+                                         "Please fix the snitch or wipe and rebootstrap this node.");
+        }
+
         // initialize keyspaces
         for (String keyspaceName : Schema.instance.getKeyspaces())
         {

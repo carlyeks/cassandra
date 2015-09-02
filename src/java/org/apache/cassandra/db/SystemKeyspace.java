@@ -757,6 +757,21 @@ public class SystemKeyspace
     }
 
     /**
+     * Gets the stored rack for the local node, or null if none have been set yet.
+     */
+    public static String getRack()
+    {
+        String req = "SELECT rack FROM system.%s WHERE key='%s'";
+        UntypedResultSet result = executeInternal(String.format(req, LOCAL_CF, LOCAL_KEY));
+
+        // Look up the Rack (return it if found)
+        if (!result.isEmpty() && result.one().has("rack"))
+            return result.one().getString("rack");
+
+        return null;
+    }
+
+    /**
      * @param cfName The name of the ColumnFamily responsible for part of the schema (keyspace, ColumnFamily, columns)
      * @return CFS responsible to hold low-level serialized schema
      */
