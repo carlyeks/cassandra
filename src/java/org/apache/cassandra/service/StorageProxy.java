@@ -680,7 +680,7 @@ public class StorageProxy implements StorageProxyMBean
                 String keyspaceName = mutation.getKeyspaceName();
                 Token tk = mutation.key().getToken();
                 InetAddress pairedEndpoint = MaterializedViewUtils.getViewNaturalEndpoint(keyspaceName, baseToken, tk);
-                List<InetAddress> naturalEndpoints = Lists.newArrayList(pairedEndpoint);
+                List<InetAddress> naturalEndpoints = Collections.singletonList(pairedEndpoint);
 
                 WriteResponseHandlerWrapper wrapper = wrapMVBatchResponseHandler(mutation,
                                                                                  consistencyLevel,

@@ -26,6 +26,7 @@ import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.locator.AbstractReplicationStrategy;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 public final class MaterializedViewUtils
@@ -57,6 +58,11 @@ public final class MaterializedViewUtils
      */
     public static InetAddress getViewNaturalEndpoint(String keyspaceName, Token baseToken, Token viewToken)
     {
+        // We are currently not part of the ring, but we may get updates to the base table. In that case, we return
+        // no-one that the updates should be sent to.
+        if (!StorageService.instance.isJoined())
+            return FBUtilities.getBroadcastAddress();
+
         AbstractReplicationStrategy replicationStrategy = Keyspace.open(keyspaceName).getReplicationStrategy();
 
         String localDataCenter = DatabaseDescriptor.getEndpointSnitch().getDatacenter(FBUtilities.getBroadcastAddress());
