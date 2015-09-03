@@ -60,6 +60,7 @@ import org.apache.cassandra.batchlog.BatchRemoveVerbHandler;
 import org.apache.cassandra.batchlog.BatchlogManager;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
+import org.apache.cassandra.db.compaction.CompactionManifest;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 import org.apache.cassandra.dht.BootStrapper;
 import org.apache.cassandra.dht.IPartitioner;
@@ -703,7 +704,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             JVMStabilityInspector.inspectThrowable(t);
             logger.warn("Error loading counter cache", t);
         }
-
 
         if (Boolean.parseBoolean(System.getProperty("cassandra.join_ring", "true")))
         {
@@ -1380,6 +1380,29 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                 rpcaddrs.add(getRpcaddress(endpoint));
             }
             map.put(entry.getKey().asList(), rpcaddrs);
+        }
+        return map;
+    }
+
+    @Override
+    public Map<String, List<String>> getManifestDescription(String keyspace, String table)
+    {
+        UUID cfId = Schema.instance.getId(keyspace, table);
+        if (cfId == null)
+        {
+            return Collections.emptyMap();
+        }
+        ColumnFamilyStore cfs = Schema.instance.getColumnFamilyStoreInstance(cfId);
+        if (cfs == null)
+        {
+            return Collections.emptyMap();
+        }
+
+        CompactionManifest manifest = cfs.getCompactionStrategyManager().getManifest();
+        Map<String, List<String>> map = new TreeMap<>();
+        for (String level: manifest.getSets())
+        {
+            map.put(level, Lists.newArrayList(manifest.getSSTables(level)));
         }
         return map;
     }

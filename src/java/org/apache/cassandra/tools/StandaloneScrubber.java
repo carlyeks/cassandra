@@ -171,16 +171,18 @@ public class StandaloneScrubber
                 }
             };
 
+            LeveledCompactionStrategy lcs = (LeveledCompactionStrategy)strategyManager.getStrategies().get(0);
+
             List<SSTableReader> repaired = Lists.newArrayList(Iterables.filter(sstables, repairedPredicate));
             List<SSTableReader> unRepaired = Lists.newArrayList(Iterables.filter(sstables, Predicates.not(repairedPredicate)));
 
-            LeveledManifest repairedManifest = LeveledManifest.create(cfs, maxSizeInMB, repaired);
-            for (int i = 1; i < repairedManifest.getLevelCount(); i++)
+            LeveledManifest repairedManifest = LeveledManifest.create(cfs, maxSizeInMB, lcs.maxOverlappingLevel, repaired);
+            for (int i = lcs.maxOverlappingLevel; i < repairedManifest.getLevelCount(); i++)
             {
                 repairedManifest.repairOverlappingSSTables(i);
             }
-            LeveledManifest unRepairedManifest = LeveledManifest.create(cfs, maxSizeInMB, unRepaired);
-            for (int i = 1; i < unRepairedManifest.getLevelCount(); i++)
+            LeveledManifest unRepairedManifest = LeveledManifest.create(cfs, maxSizeInMB, lcs.maxOverlappingLevel, unRepaired);
+            for (int i = lcs.maxOverlappingLevel; i < unRepairedManifest.getLevelCount(); i++)
             {
                 unRepairedManifest.repairOverlappingSSTables(i);
             }

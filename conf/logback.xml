@@ -72,6 +72,24 @@ appender reference in the root level section below.
     <appender-ref ref="DEBUGLOG" />
   </appender>
 
+  
+  <!-- COMPACTIONLOG rolling file appender to compaction.log (all levels) -->
+
+  <appender name="COMPACTIONLOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${cassandra.logdir}/compaction.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+      <fileNamePattern>${cassandra.logdir}/compaction.log.%i.zip</fileNamePattern>
+      <minIndex>1</minIndex>
+      <maxIndex>20</maxIndex>
+    </rollingPolicy>
+    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+      <maxFileSize>20MB</maxFileSize>
+    </triggeringPolicy>
+    <encoder>
+      <pattern>%-5level [%thread] %date{ISO8601} %F:%L - %msg%n</pattern>
+    </encoder>
+  </appender>
+  
   <!-- STDOUT console appender to stdout (INFO level) -->
 
   <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">

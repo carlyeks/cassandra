@@ -510,4 +510,31 @@ public class CompactionStrategyManager implements INotificationConsumer
             return repaired.createSSTableMultiWriter(descriptor, keyCount, repairedAt, collector, header, txn);
         }
     }
+
+    public CompactionManifest getManifest()
+    {
+        final Map<String, List<String>> setToSSTables = new HashMap<>();
+        final CompactionManifest repairedManifest = repaired.getManifest(), unrepairedManifest = unrepaired.getManifest();
+        for (String repairedSet : repairedManifest.getSets())
+        {
+            setToSSTables.put("repaired-" + repairedSet, repairedManifest.getSSTables(repairedSet));
+        }
+        for (String unrepairedSet : unrepairedManifest.getSets())
+        {
+            setToSSTables.put("unrepaired-" + unrepairedSet, unrepairedManifest.getSSTables(unrepairedSet));
+        }
+
+        return new CompactionManifest()
+        {
+            public Iterable<String> getSets()
+            {
+                return setToSSTables.keySet();
+            }
+
+            public List<String> getSSTables(String set)
+            {
+                return setToSSTables.get(set);
+            }
+        };
+    }
 }

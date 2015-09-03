@@ -1258,6 +1258,11 @@ public class NodeProbe implements AutoCloseable
         return ssProxy.getLoggingLevels();
     }
 
+    public Map<String, List<String>> getManifestDescription(String keyspace, String table)
+    {
+        return ssProxy.getManifestDescription(keyspace, table);
+    }
+
     public void resumeBootstrap(PrintStream out) throws IOException
     {
         BootstrapMonitor monitor = new BootstrapMonitor(out);

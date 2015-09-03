@@ -1174,7 +1174,15 @@ public class DatabaseDescriptor
         conf.compaction_throughput_mb_per_sec = value;
     }
 
-    public static int getCompactionLargePartitionWarningThreshold() { return conf.compaction_large_partition_warning_threshold_mb * 1024 * 1024; }
+    public static int getCompactionLargePartitionWarningThreshold()
+    {
+        return conf.compaction_large_partition_warning_threshold_mb * 1024 * 1024;
+    }
+
+    public static int getDefaultMaxOverlappingLevel()
+    {
+        return conf.default_max_overlapping_level;
+    }
 
     public static boolean getDisableSTCSInL0()
     {

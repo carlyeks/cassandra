@@ -203,6 +203,30 @@ public abstract class AbstractCompactionStrategy
      */
     public abstract long getMaxSSTableBytes();
 
+    public CompactionManifest getManifest()
+    {
+        return new CompactionManifest()
+        {
+            public Iterable<String> getSets()
+            {
+                List<String> levels = new ArrayList<>();
+                levels.add("all");
+                return levels;
+            }
+
+            public List<String> getSSTables(String set)
+            {
+                List<String> levelFiles = new ArrayList<>();
+                for (SSTableReader reader : cfs.getSSTables(SSTableSet.CANONICAL))
+                {
+                    String filename = reader.getFilename();
+                    levelFiles.add(filename.substring(filename.lastIndexOf('/') + 1));
+                }
+                return levelFiles;
+            }
+        };
+    }
+
     public void enable()
     {
     }

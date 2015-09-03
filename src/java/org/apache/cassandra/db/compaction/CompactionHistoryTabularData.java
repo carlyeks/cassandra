@@ -77,7 +77,7 @@ public class CompactionHistoryTabularData
 
             result.put(new CompositeDataSupport(COMPOSITE_TYPE, ITEM_NAMES,
                        new Object[]{ id.toString(), ksName, cfName, compactedAt, bytesIn, bytesOut,
-                                     "{" + FBUtilities.toString(rowMerged) + "}" }));
+                                     rowMerged == null ? "" : "{" + FBUtilities.toString(rowMerged) + "}" }));
         }
         return result;
     }
