@@ -136,7 +136,8 @@ public class MaterializedViewTest extends CQLTester
     }
 
     @Test
-    public void testPrimaryKeyIsNotNull() throws Throwable{
+    public void testPrimaryKeyIsNotNull() throws Throwable
+    {
         createTable("CREATE TABLE %s (" +
                     "k int, " +
                     "asciival ascii, " +
@@ -144,9 +145,24 @@ public class MaterializedViewTest extends CQLTester
                     "PRIMARY KEY((k, asciival)))");
 
         // Must include "IS NOT NULL" for primary keys
-        assertInvalid("CREATE MATERIALIZED VIEW mv_test AS SELECT * FROM %s");
+        try
+        {
+            createView("mv_test", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s");
+            Assert.fail("Should fail if no primary key is filtered as NOT NULL");
+        }
+        catch (Exception e)
+        {
+        }
+
         // Must include both when the partition key is composite
-        assertInvalid("CREATE MATERIALIZED VIEW mv_test AS SELECT * FROM %s WHERE bigintval IS NOT NULL AND asciival IS NOT NULL PRIMARY KEY (bigintval, k, asciival)");
+        try
+        {
+            createView("mv_test", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE bigintval IS NOT NULL AND asciival IS NOT NULL PRIMARY KEY (bigintval, k, asciival)");
+            Assert.fail("Should fail if compound primary is not completely filtered as NOT NULL");
+        }
+        catch (Exception e)
+        {
+        }
 
         dropTable("DROP TABLE %s");
 
@@ -155,7 +171,15 @@ public class MaterializedViewTest extends CQLTester
                     "asciival ascii, " +
                     "bigintval bigint, " +
                     "PRIMARY KEY(k, asciival))");
-        assertInvalid("CREATE MATERIALIZED VIEW mv_test AS SELECT * FROM %s");
+        try
+        {
+            createView("mv_test", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s");
+            Assert.fail("Should fail if no primary key is filtered as NOT NULL");
+        }
+        catch (Exception e)
+        {
+        }
+
         // Can omit "k IS NOT NULL" because we have a sinlge partition key
         createView("mv_test", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE bigintval IS NOT NULL AND asciival IS NOT NULL PRIMARY KEY (bigintval, k, asciival)");
     }
