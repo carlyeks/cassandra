@@ -1310,4 +1310,46 @@ public class ViewTest extends CQLTester
         int expected = rows.get(0).getInt("c");
         assertRowsNet(protocolVersion, mvRows, row(expected));
     }
+
+    @Test
+    public void testClusteringOrder() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "a int," +
+                    "b int," +
+                    "c int," +
+                    "d int," +
+                    "PRIMARY KEY (a, b, c))" +
+                    "WITH CLUSTERING ORDER BY (b ASC, c DESC)");
+
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE b IS NOT NULL AND c IS NOT NULL PRIMARY KEY (a, b, c) WITH CLUSTERING ORDER BY (b DESC)");
+        createView("mv2", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE b IS NOT NULL AND c IS NOT NULL PRIMARY KEY (a, c, b) WITH CLUSTERING ORDER BY (c ASC)");
+        createView("mv3", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE b IS NOT NULL AND c IS NOT NULL PRIMARY KEY (a, b, c)");
+        createView("mv4", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE b IS NOT NULL AND c IS NOT NULL PRIMARY KEY (a, c, b) WITH CLUSTERING ORDER BY (c DESC)");
+
+        updateView("INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?) USING TIMESTAMP 1", 1, 1, 1, 1);
+        updateView("INSERT INTO %s (a, b, c, d) VALUES (?, ?, ?, ?) USING TIMESTAMP 1", 1, 2, 2, 2);
+
+        ResultSet mvRows = executeNet(protocolVersion, "SELECT b FROM mv1");
+        assertRowsNet(protocolVersion, mvRows,
+                      row(2),
+                      row(1));
+
+        mvRows = executeNet(protocolVersion, "SELECT c FROM mv2");
+        assertRowsNet(protocolVersion, mvRows,
+                      row(1),
+                      row(2));
+
+        mvRows = executeNet(protocolVersion, "SELECT b FROM mv3");
+        assertRowsNet(protocolVersion, mvRows,
+                      row(1),
+                      row(2));
+
+        mvRows = executeNet(protocolVersion, "SELECT c FROM mv4");
+        assertRowsNet(protocolVersion, mvRows,
+                      row(2),
+                      row(1));
+    }
 }

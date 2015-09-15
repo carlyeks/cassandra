@@ -35,6 +35,7 @@ import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.selection.RawSelector;
 import org.apache.cassandra.cql3.selection.Selectable;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.ReversedType;
 import org.apache.cassandra.db.view.View;
 import org.apache.cassandra.exceptions.AlreadyExistsException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
@@ -90,11 +91,25 @@ public class CreateViewStatement extends SchemaAlteringStatement
     private interface AddColumn {
         void add(ColumnIdentifier identifier, AbstractType<?> type);
     }
-    private static void add(CFMetaData baseCfm, Iterable<ColumnIdentifier> columns, AddColumn adder)
+
+    private void add(CFMetaData baseCfm, Iterable<ColumnIdentifier> columns, AddColumn adder)
     {
         for (ColumnIdentifier column : columns)
         {
-            adder.add(column, baseCfm.getColumnDefinition(column).type);
+            AbstractType<?> type = baseCfm.getColumnDefinition(column).type;
+            if (properties.definedOrdering.containsKey(column))
+            {
+                boolean desc = properties.definedOrdering.get(column);
+                if (!desc && type.isReversed())
+                {
+                    type = ((ReversedType)type).baseType;
+                }
+                else if (desc && !type.isReversed())
+                {
+                    type = ReversedType.getInstance(type);
+                }
+            }
+            adder.add(column, type);
         }
     }
 
