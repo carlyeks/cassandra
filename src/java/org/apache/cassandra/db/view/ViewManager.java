@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -179,6 +180,18 @@ public class ViewManager
     public Iterable<View> allViews()
     {
         return viewsByName.values();
+    }
+
+    public void update(String viewName)
+    {
+        View view = viewsByName.get(viewName);
+        assert view != null : "When updating a view, it should already be in the ViewManager";
+        view.build();
+
+        // We provide the new definition from the base metadata
+        Optional<ViewDefinition> viewDefinition = keyspace.getMetadata().views.get(viewName);
+        assert viewDefinition.isPresent() : "When updating a view, it should still be in the Keyspaces views";
+        view.updateDefinition(viewDefinition.get());
     }
 
     public void reload()

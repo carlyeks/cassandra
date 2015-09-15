@@ -625,7 +625,7 @@ public class Schema
 
         Keyspace keyspace = Keyspace.open(view.ksName);
         keyspace.getColumnFamilyStore(view.viewName).reload();
-        Keyspace.open(view.ksName).viewManager.reload();
+        Keyspace.open(view.ksName).viewManager.update(view.viewName);
         MigrationManager.instance.notifyUpdateView(view, columnsDidChange);
     }
 

@@ -99,21 +99,21 @@ public class ViewTest extends CQLTester
         execute("INSERT INTO %s (\"theKey\", \"theClustering\", \"theValue\") VALUES (?, ?, ?)", 0, 0, 0);
 
         createView("mv_test", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s " +
-                "WHERE \"theKey\" IS NOT NULL AND \"theClustering\" IS NOT NULL AND \"theValue\" IS NOT NULL " +
-                "PRIMARY KEY (\"theKey\", \"theClustering\")");
+                              "WHERE \"theKey\" IS NOT NULL AND \"theClustering\" IS NOT NULL AND \"theValue\" IS NOT NULL " +
+                              "PRIMARY KEY (\"theKey\", \"theClustering\")");
 
         while (!SystemKeyspace.isViewBuilt(keyspace(), "mv_test"))
             Thread.sleep(10);
         createView("mv_test2", "CREATE MATERIALIZED VIEW %s AS SELECT \"theKey\", \"theClustering\", \"theValue\" FROM %%s " +
-                "WHERE \"theKey\" IS NOT NULL AND \"theClustering\" IS NOT NULL AND \"theValue\" IS NOT NULL " +
-                "PRIMARY KEY (\"theKey\", \"theClustering\")");
+                               "WHERE \"theKey\" IS NOT NULL AND \"theClustering\" IS NOT NULL AND \"theValue\" IS NOT NULL " +
+                               "PRIMARY KEY (\"theKey\", \"theClustering\")");
         while (!SystemKeyspace.isViewBuilt(keyspace(), "mv_test2"))
             Thread.sleep(10);
 
         for (String mvname : Arrays.asList("mv_test", "mv_test2"))
         {
             assertRows(execute("SELECT \"theKey\", \"theClustering\", \"theValue\" FROM " + mvname),
-                    row(0, 0, 0)
+                       row(0, 0, 0)
             );
         }
 
@@ -122,7 +122,7 @@ public class ViewTest extends CQLTester
         for (String mvname : Arrays.asList("mv_test", "mv_test2"))
         {
             assertRows(execute("SELECT \"theKey\", \"Col\", \"theValue\" FROM " + mvname),
-                    row(1, 1, 0)
+                       row(0, 0, 0)
             );
         }
     }
