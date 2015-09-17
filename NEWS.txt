@@ -217,6 +217,15 @@ New features
      to convert from date into timestamp type and bigint raw value.
    - SizeTieredCompactionStrategy parameter cold_reads_to_omit has been removed.
 
+2.1.10
+======
+
+New features
+------------
+    - Switching racks is no longer an allowed operation on a node which has
+      data. Instead, the node will need to be wiped and bootstrapped. If
+      moving from the SimpleSnitch, make sure the rack containing all current
+      nodes is named "rack1".
 
 2.1.9
 =====
