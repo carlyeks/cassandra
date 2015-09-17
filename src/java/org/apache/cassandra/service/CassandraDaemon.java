@@ -321,8 +321,11 @@ public class CassandraDaemon
         {
             String currentRack = DatabaseDescriptor.getEndpointSnitch().getRack(FBUtilities.getBroadcastAddress());
             if (!storedRack.equals(currentRack))
-                throw new AssertionError("Cannot start node if snitch's rack differs from previous rack. " +
-                                         "Please fix the snitch or wipe and rebootstrap this node.");
+            {
+                logger.error("Cannot start node if snitch's rack differs from previous rack. " +
+                             "Please fix the snitch or wipe and rebootstrap this node.");
+                System.exit(100);
+            }
         }
 
         // initialize keyspaces
