@@ -49,7 +49,7 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
     private static final long DEFAULT_MAX_PAUSE = 5000L * 1000000L; // 5 seconds
     private static final long MAX_LOCAL_PAUSE_IN_NANOS = getMaxLocalPause();
     private long lastInterpret = System.nanoTime();
-    private boolean wasPaused = false;
+    private long lastPause = 0L;
 
     private static long getMaxLocalPause()
     {
@@ -164,7 +164,15 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
         {
             if (state.getKey() == ApplicationState.TOKENS)
                 continue;
-            sb.append("  ").append(state.getKey()).append(":").append(state.getValue().value).append("\n");
+            sb.append("  ").append(state.getKey()).append(":").append(state.getValue().version).append(":").append(state.getValue().value).append("\n");
+        }
+        if (endpointState.applicationState.containsKey(ApplicationState.TOKENS))
+        {
+            sb.append("  TOKENS:").append(endpointState.applicationState.get(ApplicationState.TOKENS).version).append(":<hidden>\n");
+        }
+        else
+        {
+            sb.append("  TOKENS: not present\n");
         }
     }
 
@@ -247,12 +255,12 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
         if (diff > MAX_LOCAL_PAUSE_IN_NANOS)
         {
             logger.warn("Not marking nodes down due to local pause of {} > {}", diff, MAX_LOCAL_PAUSE_IN_NANOS);
-            wasPaused = true;
+            lastPause = now;
             return;
         }
-        if (wasPaused)
+        if (System.nanoTime() - lastPause < MAX_LOCAL_PAUSE_IN_NANOS)
         {
-            wasPaused = false;
+            logger.debug("Still not marking nodes down due to local pause");
             return;
         }
         double phi = hbWnd.phi(now);

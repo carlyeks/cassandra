@@ -138,9 +138,9 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
             else:
                 output.append(stmt)
             if len(stmt) > 2:
-                if stmt[-3][0] == 'apply':
+                if stmt[-3][1].upper() == 'APPLY':
                     in_batch = False
-                elif stmt[0][0] == 'begin':
+                elif stmt[0][1].upper() == 'BEGIN':
                     in_batch = True
         return output, in_batch
 
@@ -210,17 +210,17 @@ class CqlParsingRuleSet(pylexotron.ParsingRuleSet):
             newcandidates = []
             for c in candidates:
                 if self.want_space_between(tokens[-1], c) \
-                and prefix is None \
-                and not text[-1].isspace() \
-                and not c[0].isspace():
+                        and prefix is None \
+                        and not text[-1].isspace() \
+                        and not c[0].isspace():
                     c = ' ' + c
                 newcandidates.append(c)
             candidates = newcandidates
 
         # append a space for single, complete identifiers
         if len(candidates) == 1 and candidates[0][-1].isalnum()  \
-                                and lasttype != 'unclosedString' \
-                                and lasttype != 'unclosedName':
+                and lasttype != 'unclosedString' \
+                and lasttype != 'unclosedName':
             candidates[0] += ' '
         return candidates, hints
 
