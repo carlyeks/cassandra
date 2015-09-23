@@ -27,7 +27,6 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.rmi.server.RMIClientSocketFactory;
 import java.rmi.server.RMISocketFactory;
-import java.text.SimpleDateFormat;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -471,7 +470,7 @@ public class NodeProbe implements AutoCloseable
 
     public Map<String, String> getHostIdMap()
     {
-        return ssProxy.getHostIdMap();
+        return ssProxy.getEndpointToHostId();
     }
 
     public String getLoadString()
@@ -765,7 +764,7 @@ public class NodeProbe implements AutoCloseable
 
     public String getEndpoint()
     {
-        Map<String, String> hostIdToEndpoint = ssProxy.getHostIdMap();
+        Map<String, String> hostIdToEndpoint = ssProxy.getHostIdToEndpoint();
         return hostIdToEndpoint.get(ssProxy.getLocalHostId());
     }
 
