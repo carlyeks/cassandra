@@ -17,19 +17,19 @@
  */
 package org.apache.cassandra.metrics;
 
+
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
-
-import com.google.common.collect.Maps;
+import java.util.concurrent.TimeUnit;
 
 import com.codahale.metrics.*;
 import com.codahale.metrics.Timer;
+import com.google.common.collect.Maps;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.Memtable;
 import org.apache.cassandra.db.lifecycle.SSTableSet;
-import org.apache.cassandra.db.lifecycle.View;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.utils.EstimatedHistogram;
@@ -116,6 +116,10 @@ public class TableMetrics
     public final TableHistogram liveScannedHistogram;
     /** Column update time delta on this CF */
     public final TableHistogram colUpdateTimeDeltaHistogram;
+    /** time taken acquiring the partition lock for materialized view updates for this table */
+    public final TableTimer viewLockAcquireTime;
+    /** time taken during the local read of a materialized view update */
+    public final TableTimer viewReadTime;
     /** Disk space used by snapshot files which */
     public final Gauge<Long> trueSnapshotsSize;
     /** Row cache hits, but result out of range */
@@ -611,6 +615,8 @@ public class TableMetrics
         tombstoneScannedHistogram = createTableHistogram("TombstoneScannedHistogram", cfs.keyspace.metric.tombstoneScannedHistogram);
         liveScannedHistogram = createTableHistogram("LiveScannedHistogram", cfs.keyspace.metric.liveScannedHistogram);
         colUpdateTimeDeltaHistogram = createTableHistogram("ColUpdateTimeDeltaHistogram", cfs.keyspace.metric.colUpdateTimeDeltaHistogram);
+        viewLockAcquireTime = createTableTimer("ViewLockAcquireTime", cfs.keyspace.metric.viewLockAcquireTime);
+        viewReadTime = createTableTimer("ViewReadTime", cfs.keyspace.metric.viewReadTime);
         coordinatorReadLatency = Metrics.timer(factory.createMetricName("CoordinatorReadLatency"));
         coordinatorScanLatency = Metrics.timer(factory.createMetricName("CoordinatorScanLatency"));
         waitingOnFreeMemtableSpace = Metrics.histogram(factory.createMetricName("WaitingOnFreeMemtableSpace"));
@@ -751,6 +757,21 @@ public class TableMetrics
                                                     globalAliasFactory.createMetricName(alias)));
     }
 
+    protected TableTimer createTableTimer(String name, Timer keyspaceTimer)
+    {
+        return createTableTimer(name, name, keyspaceTimer);
+    }
+
+    protected TableTimer createTableTimer(String name, String alias, Timer keyspaceTimer)
+    {
+        Timer cfTimer = Metrics.timer(factory.createMetricName(name), aliasFactory.createMetricName(alias));
+        register(name, alias, cfTimer);
+        return new TableTimer(cfTimer,
+                              keyspaceTimer,
+                              Metrics.timer(globalFactory.createMetricName(name),
+                                            globalAliasFactory.createMetricName(alias)));
+    }
+
     /**
      * Registers a metric to be removed when unloading CF.
      * @return true if first time metric with that name has been registered
@@ -778,6 +799,25 @@ public class TableMetrics
             for(Histogram histo : all)
             {
                 histo.update(i);
+            }
+        }
+    }
+
+    public static class TableTimer
+    {
+        public final Timer[] all;
+        public final Timer cf;
+        private TableTimer(Timer cf, Timer keyspace, Timer global)
+        {
+            this.cf = cf;
+            this.all = new Timer[]{cf, keyspace, global};
+        }
+
+        public void update(long i, TimeUnit unit)
+        {
+            for(Timer timer : all)
+            {
+                timer.update(i, unit);
             }
         }
     }

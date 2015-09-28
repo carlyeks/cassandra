@@ -412,8 +412,8 @@ class ArrivalWindow
             long interArrivalTime = (value - tLast);
             if (interArrivalTime <= MAX_INTERVAL_IN_NANO)
                 arrivalIntervals.add(interArrivalTime);
-            else
-                logger.debug("Ignoring interval time of {} for {}", interArrivalTime, ep);
+            //else
+            //    logger.debug("Ignoring interval time of {} for {}", interArrivalTime, ep);
         }
         else
         {
