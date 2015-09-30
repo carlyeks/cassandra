@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.metrics;
 
-
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
@@ -36,7 +35,6 @@ import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.TopKSampler;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
-
 
 /**
  * Metrics for {@link ColumnFamilyStore}.
@@ -615,11 +613,22 @@ public class TableMetrics
         tombstoneScannedHistogram = createTableHistogram("TombstoneScannedHistogram", cfs.keyspace.metric.tombstoneScannedHistogram);
         liveScannedHistogram = createTableHistogram("LiveScannedHistogram", cfs.keyspace.metric.liveScannedHistogram);
         colUpdateTimeDeltaHistogram = createTableHistogram("ColUpdateTimeDeltaHistogram", cfs.keyspace.metric.colUpdateTimeDeltaHistogram);
-        viewLockAcquireTime = createTableTimer("ViewLockAcquireTime", cfs.keyspace.metric.viewLockAcquireTime);
-        viewReadTime = createTableTimer("ViewReadTime", cfs.keyspace.metric.viewReadTime);
         coordinatorReadLatency = Metrics.timer(factory.createMetricName("CoordinatorReadLatency"));
         coordinatorScanLatency = Metrics.timer(factory.createMetricName("CoordinatorScanLatency"));
         waitingOnFreeMemtableSpace = Metrics.histogram(factory.createMetricName("WaitingOnFreeMemtableSpace"));
+
+        // We do not want to capture view mutation specific metrics for a view
+        // They only makes sense to capture on the base table
+        if (cfs.metadata.isView())
+        {
+            viewLockAcquireTime = null;
+            viewReadTime = null;
+        }
+        else
+        {
+            viewLockAcquireTime = createTableTimer("ViewLockAcquireTime", cfs.keyspace.metric.viewLockAcquireTime);
+            viewReadTime = createTableTimer("ViewReadTime", cfs.keyspace.metric.viewReadTime);
+        }
 
         trueSnapshotsSize = createTableGauge("SnapshotsSize", new Gauge<Long>()
         {

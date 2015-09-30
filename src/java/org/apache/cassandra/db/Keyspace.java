@@ -440,9 +440,11 @@ public class Keyspace
 
                     return;
                 }
-            } else {
+            }
+            else
+            {
                 long acquireTime = System.currentTimeMillis() - mutation.viewLockAcquireStart.get();
-                if(!isClReplay)
+                if (!isClReplay)
                 {
                     for(UUID cfid : mutation.getColumnFamilyIds())
                     {

@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.metrics;
 
-
 import java.util.Set;
 
 import com.codahale.metrics.Gauge;
@@ -30,7 +29,6 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 import static org.apache.cassandra.metrics.CassandraMetricsRegistry.Metrics;
-
 
 /**
  * Metrics for {@link ColumnFamilyStore}.

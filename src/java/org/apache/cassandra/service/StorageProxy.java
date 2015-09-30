@@ -25,7 +25,6 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
@@ -646,18 +645,12 @@ public class StorageProxy implements StorageProxyMBean
         submitHint(mutation, endpointsToHint, null);
     }
 
-    public static void mutateMV(ByteBuffer dataKey, Collection<Mutation> mutations, boolean writeCommitLog)
-    throws UnavailableException, OverloadedException, WriteTimeoutException
-    {
-        mutateMV(dataKey, mutations, writeCommitLog, new AtomicLong(Long.MAX_VALUE));
-    }
-
     /**
      * Use this method to have these Mutations applied
      * across all replicas.
      *
      * @param mutations the mutations to be applied across the replicas
-     * @param writeCommitlog if commitlog should be written
+     * @param writeCommitLog if commitlog should be written
      * @param baseComplete time from epoch in ms that the local base mutation was(or will be) completed
      */
     public static void mutateMV(ByteBuffer dataKey, Collection<Mutation> mutations, boolean writeCommitLog, AtomicLong baseComplete)
