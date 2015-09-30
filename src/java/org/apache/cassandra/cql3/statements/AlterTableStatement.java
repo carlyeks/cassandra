@@ -186,54 +186,18 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 if (def == null)
                     throw new InvalidRequestException(String.format("Column %s was not found in table %s", columnName, columnFamily()));
 
-                AbstractType<?> validatorType = validator.getType();
-                switch (def.kind)
-                {
-                    case PARTITION_KEY:
-                        if (validatorType instanceof CounterColumnType)
-                            throw new InvalidRequestException(String.format("counter type is not supported for PRIMARY KEY part %s", columnName));
-
-                        AbstractType<?> currentType = cfm.getKeyValidatorAsClusteringComparator().subtype(def.position());
-                        if (!validatorType.isValueCompatibleWith(currentType))
-                            throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are incompatible.",
-                                                                           columnName,
-                                                                           currentType.asCQL3Type(),
-                                                                           validator));
-                        break;
-                    case CLUSTERING:
-                        AbstractType<?> oldType = cfm.comparator.subtype(def.position());
-                        // Note that CFMetaData.validateCompatibility already validate the change we're about to do. However, the error message it
-                        // sends is a bit cryptic for a CQL3 user, so validating here for a sake of returning a better error message
-                        // Do note that we need isCompatibleWith here, not just isValueCompatibleWith.
-                        if (!validatorType.isCompatibleWith(oldType))
-                            throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are not order-compatible.",
-                                                                           columnName,
-                                                                           oldType.asCQL3Type(),
-                                                                           validator));
-
-                        break;
-                    case REGULAR:
-                    case STATIC:
-                        // Thrift allows to change a column validator so CFMetaData.validateCompatibility will let it slide
-                        // if we change to an incompatible type (contrarily to the comparator case). But we don't want to
-                        // allow it for CQL3 (see #5882) so validating it explicitly here. We only care about value compatibility
-                        // though since we won't compare values (except when there is an index, but that is validated by
-                        // ColumnDefinition already).
-                        if (!validatorType.isValueCompatibleWith(def.type))
-                            throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are incompatible.",
-                                                                           columnName,
-                                                                           def.type.asCQL3Type(),
-                                                                           validator));
-                        break;
-                }
+                validateAlter(cfm, columnName, validator);
                 // In any case, we update the column definition
+                AbstractType<?> validatorType = validator.getType();
                 cfm.addOrReplaceColumnDefinition(def.withNewType(validatorType));
 
-                // We have to alter the schema of the view table as well; it doesn't affect the definition however
+                // We also have to validate the view types here. If we have a view which includes a column as part of
+                // the clustering key, we need to make sure that it is indeed compatible.
                 for (ViewDefinition view : views)
                 {
                     if (!view.includes(columnName)) continue;
                     ViewDefinition viewCopy = view.copy();
+                    validateAlter(view.metadata, columnName, validator);
                     viewCopy.metadata.addOrReplaceColumnDefinition(def.withNewType(validatorType));
 
                     if (viewUpdates == null)
@@ -359,6 +323,51 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 MigrationManager.announceViewUpdate(viewUpdate, isLocalOnly);
         }
         return true;
+    }
+
+    private static void validateAlter(CFMetaData cfm, ColumnIdentifier columnName, CQL3Type newType)
+    {
+        AbstractType<?> validatorType = newType.getType();
+        ColumnDefinition def = cfm.getColumnDefinition(columnName);
+        switch (def.kind)
+        {
+            case PARTITION_KEY:
+                if (validatorType instanceof CounterColumnType)
+                    throw new InvalidRequestException(String.format("counter type is not supported for PRIMARY KEY part %s", columnName));
+
+                AbstractType<?> currentType = cfm.getKeyValidatorAsClusteringComparator().subtype(def.position());
+                if (!validatorType.isValueCompatibleWith(currentType))
+                    throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are incompatible.",
+                                                                   columnName,
+                                                                   currentType.asCQL3Type(),
+                                                                   newType));
+                break;
+            case CLUSTERING:
+                AbstractType<?> oldType = cfm.comparator.subtype(def.position());
+                // Note that CFMetaData.validateCompatibility already validate the change we're about to do. However, the error message it
+                // sends is a bit cryptic for a CQL3 user, so validating here for a sake of returning a better error message
+                // Do note that we need isCompatibleWith here, not just isValueCompatibleWith.
+                if (!validatorType.isCompatibleWith(oldType))
+                    throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are not order-compatible.",
+                                                                   columnName,
+                                                                   oldType.asCQL3Type(),
+                                                                   newType));
+
+                break;
+            case REGULAR:
+            case STATIC:
+                // Thrift allows to change a column validator so CFMetaData.validateCompatibility will let it slide
+                // if we change to an incompatible type (contrarily to the comparator case). But we don't want to
+                // allow it for CQL3 (see #5882) so validating it explicitly here. We only care about value compatibility
+                // though since we won't compare values (except when there is an index, but that is validated by
+                // ColumnDefinition already).
+                if (!validatorType.isValueCompatibleWith(def.type))
+                    throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are incompatible.",
+                                                                   columnName,
+                                                                   def.type.asCQL3Type(),
+                                                                   newType));
+                break;
+        }
     }
 
     public String toString()
