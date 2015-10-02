@@ -32,6 +32,7 @@ import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.CollectionType;
 import org.apache.cassandra.db.marshal.CounterColumnType;
+import org.apache.cassandra.db.marshal.ReversedType;
 import org.apache.cassandra.db.view.View;
 import org.apache.cassandra.exceptions.*;
 import org.apache.cassandra.schema.IndexMetadata;
@@ -186,9 +187,11 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 if (def == null)
                     throw new InvalidRequestException(String.format("Column %s was not found in table %s", columnName, columnFamily()));
 
-                validateAlter(cfm, columnName, validator);
+                AbstractType<?> validatorType = def.isReversedType()
+                                                ? ReversedType.getInstance(validator.getType())
+                                                : validator.getType();
+                validateAlter(cfm, def, validatorType);
                 // In any case, we update the column definition
-                AbstractType<?> validatorType = validator.getType();
                 cfm.addOrReplaceColumnDefinition(def.withNewType(validatorType));
 
                 // We also have to validate the view types here. If we have a view which includes a column as part of
@@ -197,9 +200,12 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 {
                     if (!view.includes(columnName)) continue;
                     ViewDefinition viewCopy = view.copy();
-                    validateAlter(view.metadata, columnName, validator);
-                    def = view.metadata.getColumnDefinition(columnName);
-                    viewCopy.metadata.addOrReplaceColumnDefinition(def.withNewType(validatorType));
+                    ColumnDefinition viewDef = view.metadata.getColumnDefinition(columnName);
+                    AbstractType viewType = viewDef.isReversedType()
+                                            ? ReversedType.getInstance(validator.getType())
+                                            : validator.getType();
+                    validateAlter(view.metadata, viewDef, viewType);
+                    viewCopy.metadata.addOrReplaceColumnDefinition(viewDef.withNewType(viewType));
 
                     if (viewUpdates == null)
                         viewUpdates = new ArrayList<>();
@@ -326,22 +332,20 @@ public class AlterTableStatement extends SchemaAlteringStatement
         return true;
     }
 
-    private static void validateAlter(CFMetaData cfm, ColumnIdentifier columnName, CQL3Type newType)
+    private static void validateAlter(CFMetaData cfm, ColumnDefinition def, AbstractType<?> validatorType)
     {
-        AbstractType<?> validatorType = newType.getType();
-        ColumnDefinition def = cfm.getColumnDefinition(columnName);
         switch (def.kind)
         {
             case PARTITION_KEY:
                 if (validatorType instanceof CounterColumnType)
-                    throw new InvalidRequestException(String.format("counter type is not supported for PRIMARY KEY part %s", columnName));
+                    throw new InvalidRequestException(String.format("counter type is not supported for PRIMARY KEY part %s", def.name));
 
                 AbstractType<?> currentType = cfm.getKeyValidatorAsClusteringComparator().subtype(def.position());
                 if (!validatorType.isValueCompatibleWith(currentType))
                     throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are incompatible.",
-                                                                   columnName,
+                                                                   def.name,
                                                                    currentType.asCQL3Type(),
-                                                                   newType));
+                                                                   validatorType.asCQL3Type()));
                 break;
             case CLUSTERING:
                 AbstractType<?> oldType = cfm.comparator.subtype(def.position());
@@ -351,9 +355,9 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 if (!validatorType.isCompatibleWith(oldType))
                 {
                     throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are not order-compatible.",
-                                                                   columnName,
+                                                                   def.name,
                                                                    String.format(oldType.isReversed() ? "reversed(%s)" : "%s", oldType.asCQL3Type()),
-                                                                   newType));
+                                                                   String.format(validatorType.isReversed() ? "reversed(%s)" : "%s", validatorType.asCQL3Type())));
                 }
                 break;
             case REGULAR:
@@ -365,9 +369,9 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 // ColumnDefinition already).
                 if (!validatorType.isValueCompatibleWith(def.type))
                     throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are incompatible.",
-                                                                   columnName,
+                                                                   def.name,
                                                                    def.type.asCQL3Type(),
-                                                                   newType));
+                                                                   validatorType.asCQL3Type()));
                 break;
         }
     }
