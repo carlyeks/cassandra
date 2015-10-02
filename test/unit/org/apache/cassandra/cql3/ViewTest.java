@@ -1487,7 +1487,7 @@ public class ViewTest extends CQLTester
         // Cannot use SELECT *, as those are always handled by the includeAll shortcut in View.updateAffectsView
         createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT a, b FROM %%s WHERE a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (a, b) WITH CLUSTERING ORDER BY (b ASC)");
 
-        assertInvalid("ALTER TABLE %s ALTER b TYPE blob");
+        alterTable("ALTER TABLE %s ALTER b TYPE blob");
     }
 
     @Test
@@ -1503,7 +1503,7 @@ public class ViewTest extends CQLTester
         // Cannot use SELECT *, as those are always handled by the includeAll shortcut in View.updateAffectsView
         createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT a, b FROM %%s WHERE a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (a, b) WITH CLUSTERING ORDER BY (b DESC)");
 
-        assertInvalid("ALTER TABLE %s ALTER b TYPE blob");
+        alterTable("ALTER TABLE %s ALTER b TYPE blob");
     }
 
     @Test
@@ -1519,6 +1519,6 @@ public class ViewTest extends CQLTester
         // Cannot use SELECT *, as those are always handled by the includeAll shortcut in View.updateAffectsView
         createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT a, b FROM %%s WHERE a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (a, b) WITH CLUSTERING ORDER BY (b DESC)");
 
-        assertInvalid("ALTER TABLE %s ALTER b TYPE blob");
+        alterTable("ALTER TABLE %s ALTER b TYPE blob");
     }
 }
