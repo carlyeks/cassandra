@@ -1456,4 +1456,69 @@ public class ViewTest extends CQLTester
         ResultSet mvRows = executeNet(protocolVersion, "SELECT a, b FROM mv1");
         assertRowsNet(protocolVersion, mvRows, row(1, 1));
     }
+
+    @Test
+    public void testAlterTable() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "a int," +
+                    "b text," +
+                    "PRIMARY KEY (a, b))");
+
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        // Cannot use SELECT *, as those are always handled by the includeAll shortcut in View.updateAffectsView
+        createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT a, b FROM %%s WHERE a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (b, a)");
+
+        alterTable("ALTER TABLE %s ALTER b TYPE blob");
+    }
+
+    @Test
+    public void testAlterReversedTypeBaseTable() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "a int," +
+                    "b text," +
+                    "PRIMARY KEY (a, b))" +
+                    "WITH CLUSTERING ORDER BY (b DESC)");
+
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        // Cannot use SELECT *, as those are always handled by the includeAll shortcut in View.updateAffectsView
+        createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT a, b FROM %%s WHERE a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (a, b) WITH CLUSTERING ORDER BY (b ASC)");
+
+        assertInvalid("ALTER TABLE %s ALTER b TYPE blob");
+    }
+
+    @Test
+    public void testAlterReversedTypeViewTable() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "a int," +
+                    "b text," +
+                    "PRIMARY KEY (a, b))");
+
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        // Cannot use SELECT *, as those are always handled by the includeAll shortcut in View.updateAffectsView
+        createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT a, b FROM %%s WHERE a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (a, b) WITH CLUSTERING ORDER BY (b DESC)");
+
+        assertInvalid("ALTER TABLE %s ALTER b TYPE blob");
+    }
+
+    @Test
+    public void testAlterClusteringViewTable() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "a int," +
+                    "b text," +
+                    "PRIMARY KEY (a))");
+
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        // Cannot use SELECT *, as those are always handled by the includeAll shortcut in View.updateAffectsView
+        createView("mv1", "CREATE MATERIALIZED VIEW %s AS SELECT a, b FROM %%s WHERE a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (a, b) WITH CLUSTERING ORDER BY (b DESC)");
+
+        assertInvalid("ALTER TABLE %s ALTER b TYPE blob");
+    }
 }

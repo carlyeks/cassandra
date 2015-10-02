@@ -198,6 +198,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     if (!view.includes(columnName)) continue;
                     ViewDefinition viewCopy = view.copy();
                     validateAlter(view.metadata, columnName, validator);
+                    def = view.metadata.getColumnDefinition(columnName);
                     viewCopy.metadata.addOrReplaceColumnDefinition(def.withNewType(validatorType));
 
                     if (viewUpdates == null)
@@ -348,11 +349,12 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 // sends is a bit cryptic for a CQL3 user, so validating here for a sake of returning a better error message
                 // Do note that we need isCompatibleWith here, not just isValueCompatibleWith.
                 if (!validatorType.isCompatibleWith(oldType))
+                {
                     throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are not order-compatible.",
                                                                    columnName,
-                                                                   oldType.asCQL3Type(),
+                                                                   String.format(oldType.isReversed() ? "reversed(%s)" : "%s", oldType.asCQL3Type()),
                                                                    newType));
-
+                }
                 break;
             case REGULAR:
             case STATIC:
