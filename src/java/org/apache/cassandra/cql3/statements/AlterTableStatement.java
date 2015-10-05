@@ -356,8 +356,8 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 {
                     throw new ConfigurationException(String.format("Cannot change %s from type %s to type %s: types are not order-compatible.",
                                                                    def.name,
-                                                                   String.format(oldType.isReversed() ? "reversed(%s)" : "%s", oldType.asCQL3Type()),
-                                                                   String.format(validatorType.isReversed() ? "reversed(%s)" : "%s", validatorType.asCQL3Type())));
+                                                                   oldType.asCQL3Type(),
+                                                                   validatorType.asCQL3Type()));
                 }
                 break;
             case REGULAR:
