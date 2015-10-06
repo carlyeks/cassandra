@@ -187,7 +187,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 if (def == null)
                     throw new InvalidRequestException(String.format("Column %s was not found in table %s", columnName, columnFamily()));
 
-                AbstractType<?> validatorType = def.isReversedType()
+                AbstractType<?> validatorType = def.isReversedType() && !validator.getType().isReversed()
                                                 ? ReversedType.getInstance(validator.getType())
                                                 : validator.getType();
                 validateAlter(cfm, def, validatorType);
@@ -201,7 +201,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     if (!view.includes(columnName)) continue;
                     ViewDefinition viewCopy = view.copy();
                     ColumnDefinition viewDef = view.metadata.getColumnDefinition(columnName);
-                    AbstractType viewType = viewDef.isReversedType()
+                    AbstractType viewType = viewDef.isReversedType() && !validator.getType().isReversed()
                                             ? ReversedType.getInstance(validator.getType())
                                             : validator.getType();
                     validateAlter(view.metadata, viewDef, viewType);
