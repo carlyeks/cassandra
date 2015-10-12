@@ -62,6 +62,7 @@ public class LeveledManifest implements CompactionManifest
     // dependent on maxSSTableSize.)
     public static final int MAX_LEVEL_COUNT = (int) Math.log10(1000 * 1000 * 1000);
     private final ColumnFamilyStore cfs;
+    private final String tableId;
     @VisibleForTesting
     protected final List<SSTableReader>[] generations;
     private final PartitionPosition[] lastCompactedKeys;
@@ -73,6 +74,7 @@ public class LeveledManifest implements CompactionManifest
     LeveledManifest(ColumnFamilyStore cfs, int maxSSTableSizeInMB, int maxOverlappingLevel, SizeTieredCompactionStrategyOptions options)
     {
         this.cfs = cfs;
+        this.tableId = cfs.metadata.ksName + "." + cfs.metadata.cfName;
         this.maxSSTableSizeInBytes = maxSSTableSizeInMB * 1024L * 1024L;
         this.maxOverlappingLevel = maxOverlappingLevel;
         this.options = options;
@@ -118,7 +120,7 @@ public class LeveledManifest implements CompactionManifest
         if (canAddSSTable(reader))
         {
             // adding the sstable does not cause overlap in the level
-            logger.trace("Adding {} to L{}", reader, level);
+            logger.trace("Adding {} to {} L{}", reader, tableId, level);
             generations[level].add(reader);
         }
         else
@@ -150,7 +152,7 @@ public class LeveledManifest implements CompactionManifest
         assert !removed.isEmpty(); // use add() instead of promote when adding new sstables
         logDistribution();
         if (logger.isTraceEnabled())
-            logger.trace("Replacing [{}]", toString(removed));
+            logger.trace("{} Replacing [{}]", tableId, toString(removed));
 
         // the level for the added sstables is the max of the removed ones,
         // plus one if the removed were all on the same level
@@ -167,7 +169,7 @@ public class LeveledManifest implements CompactionManifest
             return;
 
         if (logger.isTraceEnabled())
-            logger.trace("Adding [{}]", toString(added));
+            logger.trace("{} Adding [{}]", tableId, toString(added));
 
         for (SSTableReader ssTableReader : added)
             add(ssTableReader);
@@ -276,7 +278,7 @@ public class LeveledManifest implements CompactionManifest
         Set<SSTableReader> sstablesInLevel = Sets.newHashSet(sstables);
         Set<SSTableReader> remaining = Sets.difference(sstablesInLevel, cfs.getTracker().getCompacting());
         double score = (double) SSTableReader.getTotalBytes(remaining) / (double) maxBytesForLevel(level, maxSSTableSizeInBytes);
-        logger.debug("Compaction score for level {} is {}", level, score);
+        logger.debug("Compaction score for {} level {} is {}", tableId, level, score);
 
         if (score > 1.001)
         {
@@ -286,12 +288,12 @@ public class LeveledManifest implements CompactionManifest
                 int nextLevel = getNextLevel(candidates);
                 candidates = getOverlappingStarvedSSTables(nextLevel, candidates);
                 if (logger.isDebugEnabled())
-                    logger.debug("Compaction candidates for L{} are {}", level, toString(candidates));
+                    logger.debug("Compaction candidates for {} L{} are {}", tableId, level, toString(candidates));
                 return new CompactionCandidate(candidates, nextLevel, cfs.getCompactionStrategyManager().getMaxSSTableBytes());
             }
             else
             {
-                logger.debug("No compaction candidates for L{}", level);
+                logger.debug("No compaction candidates for {} L{}", tableId, level);
             }
         }
 
@@ -311,7 +313,7 @@ public class LeveledManifest implements CompactionManifest
             List<SSTableReader> mostInteresting = getSSTablesForSTCS(getLevel(0));
             if (!mostInteresting.isEmpty())
             {
-                logger.info("Bootstrapping - doing STCS in L0");
+                logger.info("Bootstrapping - doing STCS in {} L0", cfs.metadata.ksName, cfs.metadata.cfName);
                 return new CompactionCandidate(mostInteresting, 0, Long.MAX_VALUE);
             }
             return null;
@@ -359,7 +361,7 @@ public class LeveledManifest implements CompactionManifest
                     overlappingLevel = i;
                 }
             }
-            logger.debug("Overlapping scores for L{}: sscScore {}, olScore {}", i, sscScore, olScore);
+            logger.debug("Overlapping scores for {} L{}: sscScore {}, olScore {}", tableId, i, sscScore, olScore);
         }
 
         if (overlappingScore > 0)
@@ -418,7 +420,7 @@ public class LeveledManifest implements CompactionManifest
         double overlapScore = ((double)overlaps)/possibleOverlaps;
         overlapScore = Double.isNaN(overlapScore) ? 0.0 : overlapScore;
         if (logger.isDebugEnabled())
-            logger.debug("L{} overlap score: {}", level, overlapScore);
+            logger.debug("{} L{} overlap score: {}", tableId, level, overlapScore);
         return overlapScore;
     }
 
@@ -454,7 +456,7 @@ public class LeveledManifest implements CompactionManifest
         if (logger.isTraceEnabled())
         {
             for (int j = 0; j < compactionCounter.length; j++)
-                logger.trace("CompactionCounter: {}: {}", j, compactionCounter[j]);
+                logger.trace("CompactionCounter({}): {}: {}", tableId, j, compactionCounter[j]);
         }
 
         for (int i = generations.length - 1; i > 0; i--)
@@ -485,7 +487,7 @@ public class LeveledManifest implements CompactionManifest
                         Range<PartitionPosition> r = new Range<PartitionPosition>(sstable.first, sstable.last);
                         if (boundaries.contains(r) && !compacting.contains(sstable))
                         {
-                            logger.info("Adding high-level (L{}) {} to candidates", sstable.getSSTableLevel(), sstable);
+                            logger.info("Adding high-level ({} L{}) {} to candidates", tableId, sstable.getSSTableLevel(), sstable);
                             withStarvedCandidate.add(sstable);
                             return withStarvedCandidate;
                         }
@@ -521,8 +523,8 @@ public class LeveledManifest implements CompactionManifest
             {
                 if (!getLevel(i).isEmpty())
                 {
-                    logger.trace("L{} contains {} SSTables ({} bytes) in {}",
-                                 i, getLevel(i).size(), SSTableReader.getTotalBytes(getLevel(i)), this);
+                    logger.trace("{} L{} contains {} SSTables ({} bytes) in {}",
+                                 tableId, i, getLevel(i).size(), SSTableReader.getTotalBytes(getLevel(i)), this);
                 }
             }
         }
@@ -606,7 +608,7 @@ public class LeveledManifest implements CompactionManifest
     private Collection<SSTableReader> getCandidatesForSameLevelCompaction(int level, long maxCompactingBytes)
     {
         assert level <= maxOverlappingLevel : "Cannot run a same level compaction for a level which is not overlapping.";
-        logger.debug("Choosing candidates for same level at L{}", level);
+        logger.debug("Choosing candidates for same level at {} L{}", tableId, level);
         final Set<SSTableReader> compacting = cfs.getTracker().getCompacting();
         Set<SSTableReader> candidates = new HashSet<>();
 
@@ -673,7 +675,7 @@ public class LeveledManifest implements CompactionManifest
     private Collection<SSTableReader> getCandidatesForUplevelCompaction(int level)
     {
         assert !getLevel(level).isEmpty();
-        logger.debug("Choosing candidates for up level compaction at L{}", level);
+        logger.debug("Choosing candidates for up level compaction at {} L{}", tableId, level);
 
         final Set<SSTableReader> compacting = cfs.getTracker().getCompacting();
 
@@ -940,8 +942,8 @@ public class LeveledManifest implements CompactionManifest
             tasks += estimated[i];
         }
 
-        logger.trace("Estimating {} compactions to do for {}.{}",
-                     Arrays.toString(estimated), cfs.keyspace.getName(), cfs.name);
+        logger.trace("Estimating {} compactions to do for {}",
+                     Arrays.toString(estimated), tableId);
         return Ints.checkedCast(tasks);
     }
 

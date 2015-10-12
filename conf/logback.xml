@@ -103,7 +103,14 @@ appender reference in the root level section below.
 
   <!-- Uncomment bellow and corresponding appender-ref to activate logback metrics
   <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />
-   -->
+  -->
+  
+  <logger name="org.apache.cassandra.db.compaction" level="TRACE" additivity="false">
+    <appender-ref ref="COMPACTIONLOG" />
+  </logger>
+  <logger name="org.apache.cassandra.db.Memtable" level="DEBUG" additivity="false">
+    <appender-ref ref="COMPACTIONLOG" />
+  </logger>
 
   <root level="INFO">
     <appender-ref ref="SYSTEMLOG" />
