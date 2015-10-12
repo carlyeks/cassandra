@@ -209,7 +209,7 @@ public class CompactionTask extends AbstractCompactionTask
 
             StringBuilder newSSTableNames = new StringBuilder();
             for (SSTableReader reader : newSStables)
-                newSSTableNames.append(reader.descriptor.baseFilename()).append(",");
+                newSSTableNames.append(reader.descriptor.baseFilename()).append('(').append(reader.first.getToken()).append(':').append(reader.last.getToken()).append("),");
 
             double mbps = dTime > 0 ? (double) endsize / (1024 * 1024) / ((double) dTime / 1000) : 0;
             long totalSourceRows = 0;

@@ -82,10 +82,34 @@ appender reference in the root level section below.
       <pattern>%-5level %date{HH:mm:ss,SSS} %msg%n</pattern>
     </encoder>
   </appender>
+  
+  <!-- COMPACTIONLOG rolling file appender to compaction.log (all levels) -->
+
+  <appender name="COMPACTIONLOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${cassandra.logdir}/compaction.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+      <fileNamePattern>${cassandra.logdir}/compaction.log.%i.zip</fileNamePattern>
+      <minIndex>1</minIndex>
+      <maxIndex>20</maxIndex>
+    </rollingPolicy>
+    <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+      <maxFileSize>20MB</maxFileSize>
+    </triggeringPolicy>
+    <encoder>
+      <pattern>%-5level [%thread] %date{ISO8601} %F:%L - %msg%n</pattern>
+    </encoder>
+  </appender>
 
   <!-- Uncomment bellow and corresponding appender-ref to activate logback metrics
   <appender name="LogbackMetrics" class="com.codahale.metrics.logback.InstrumentedAppender" />
-   -->
+  -->
+  
+  <logger name="org.apache.cassandra.db.compaction" level="TRACE" additivity="false">
+    <appender-ref ref="COMPACTIONLOG" />
+  </logger>
+  <logger name="org.apache.cassandra.db.Memtable" level="DEBUG" additivity="false">
+    <appender-ref ref="COMPACTIONLOG" />
+  </logger>
 
   <root level="INFO">
     <appender-ref ref="SYSTEMLOG" />

@@ -62,6 +62,7 @@ public class LeveledManifest
     // dependent on maxSSTableSize.)
     public static final int MAX_LEVEL_COUNT = (int) Math.log10(1000 * 1000 * 1000);
     private final ColumnFamilyStore cfs;
+    private final String tableId;
     @VisibleForTesting
     protected final List<SSTableReader>[] generations;
     private final PartitionPosition[] lastCompactedKeys;
@@ -72,6 +73,7 @@ public class LeveledManifest
     LeveledManifest(ColumnFamilyStore cfs, int maxSSTableSizeInMB, SizeTieredCompactionStrategyOptions options)
     {
         this.cfs = cfs;
+        this.tableId = cfs.metadata.ksName + "." + cfs.metadata.cfName;
         this.maxSSTableSizeInBytes = maxSSTableSizeInMB * 1024L * 1024L;
         this.options = options;
 
@@ -115,7 +117,7 @@ public class LeveledManifest
         if (canAddSSTable(reader))
         {
             // adding the sstable does not cause overlap in the level
-            logger.trace("Adding {} to L{}", reader, level);
+            logger.trace("Adding {} to {} L{}", reader, tableId, level);
             generations[level].add(reader);
         }
         else
@@ -147,7 +149,7 @@ public class LeveledManifest
         assert !removed.isEmpty(); // use add() instead of promote when adding new sstables
         logDistribution();
         if (logger.isTraceEnabled())
-            logger.trace("Replacing [{}]", toString(removed));
+            logger.trace("{} Replacing [{}]", tableId, toString(removed));
 
         // the level for the added sstables is the max of the removed ones,
         // plus one if the removed were all on the same level
@@ -164,7 +166,7 @@ public class LeveledManifest
             return;
 
         if (logger.isTraceEnabled())
-            logger.trace("Adding [{}]", toString(added));
+            logger.trace("{} Adding [{}]", tableId, toString(added));
 
         for (SSTableReader ssTableReader : added)
             add(ssTableReader);
@@ -276,7 +278,7 @@ public class LeveledManifest
             List<SSTableReader> mostInteresting = getSSTablesForSTCS(getLevel(0));
             if (!mostInteresting.isEmpty())
             {
-                logger.info("Bootstrapping - doing STCS in L0");
+                logger.info("Bootstrapping - doing STCS in {} L0", cfs.metadata.ksName, cfs.metadata.cfName);
                 return new CompactionCandidate(mostInteresting, 0, Long.MAX_VALUE);
             }
             return null;
@@ -339,12 +341,12 @@ public class LeveledManifest
                     int nextLevel = getNextLevel(candidates);
                     candidates = getOverlappingStarvedSSTables(nextLevel, candidates);
                     if (logger.isTraceEnabled())
-                        logger.trace("Compaction candidates for L{} are {}", i, toString(candidates));
+                        logger.trace("Compaction candidates for {} L{} are {}", tableId, i, toString(candidates));
                     return new CompactionCandidate(candidates, nextLevel, cfs.getCompactionStrategyManager().getMaxSSTableBytes());
                 }
                 else
                 {
-                    logger.trace("No compaction candidates for L{}", i);
+                    logger.trace("No compaction candidates for {} L{}", tableId, i);
                 }
             }
         }
@@ -390,7 +392,7 @@ public class LeveledManifest
         if (logger.isTraceEnabled())
         {
             for (int j = 0; j < compactionCounter.length; j++)
-                logger.trace("CompactionCounter: {}: {}", j, compactionCounter[j]);
+                logger.trace("CompactionCounter({}): {}: {}", tableId, j, compactionCounter[j]);
         }
 
         for (int i = generations.length - 1; i > 0; i--)
@@ -421,7 +423,7 @@ public class LeveledManifest
                         Range<PartitionPosition> r = new Range<PartitionPosition>(sstable.first, sstable.last);
                         if (boundaries.contains(r) && !compacting.contains(sstable))
                         {
-                            logger.info("Adding high-level (L{}) {} to candidates", sstable.getSSTableLevel(), sstable);
+                            logger.info("Adding high-level ({} L{}) {} to candidates", tableId, sstable.getSSTableLevel(), sstable);
                             withStarvedCandidate.add(sstable);
                             return withStarvedCandidate;
                         }
@@ -457,8 +459,8 @@ public class LeveledManifest
             {
                 if (!getLevel(i).isEmpty())
                 {
-                    logger.trace("L{} contains {} SSTables ({} bytes) in {}",
-                                 i, getLevel(i).size(), SSTableReader.getTotalBytes(getLevel(i)), this);
+                    logger.trace("{} L{} contains {} SSTables ({} bytes) in {}",
+                                 tableId, i, getLevel(i).size(), SSTableReader.getTotalBytes(getLevel(i)), this);
                 }
             }
         }
@@ -539,7 +541,7 @@ public class LeveledManifest
     private Collection<SSTableReader> getCandidatesFor(int level)
     {
         assert !getLevel(level).isEmpty();
-        logger.trace("Choosing candidates for L{}", level);
+        logger.trace("Choosing candidates for {} L{}", tableId, level);
 
         final Set<SSTableReader> compacting = cfs.getTracker().getCompacting();
 
@@ -703,8 +705,8 @@ public class LeveledManifest
             tasks += estimated[i];
         }
 
-        logger.trace("Estimating {} compactions to do for {}.{}",
-                     Arrays.toString(estimated), cfs.keyspace.getName(), cfs.name);
+        logger.trace("Estimating {} compactions to do for {}",
+                     Arrays.toString(estimated), tableId);
         return Ints.checkedCast(tasks);
     }
 

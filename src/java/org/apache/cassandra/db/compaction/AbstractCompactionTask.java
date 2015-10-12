@@ -27,7 +27,8 @@ import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
 
-public abstract class AbstractCompactionTask extends WrappedRunnable
+public abstract class
+AbstractCompactionTask extends WrappedRunnable
 {
     protected final ColumnFamilyStore cfs;
     protected LifecycleTransaction transaction;
