@@ -578,7 +578,7 @@ public class LeveledManifest implements CompactionManifest
 
         final Set<SSTableReader> compacting = cfs.getTracker().getCompacting();
         Collection<SSTableReader> uplevelCandidates = getLevel(level + 1);
-        Collection<SSTableReader> filteredCandidates = Lists.newArrayList(Iterables.filter(uplevelCandidates, Predicates.not(Predicates.and(Predicates.in(compacting), suspectP))));
+        Collection<SSTableReader> filteredCandidates = Lists.newArrayList(Iterables.filter(uplevelCandidates, Predicates.not(Predicates.or(Predicates.in(compacting), suspectP))));
         logger.trace("padding candidates for {} L{} compaction up to {} from {}; L{} has {}/{} candidates", tableId, level, maxSize, candidates.size(), level + 1, filteredCandidates.size(), uplevelCandidates.size());
 
         Set<SSTableReader> potentialInclusions = overlapping(candidates, filteredCandidates);
@@ -737,7 +737,7 @@ public class LeveledManifest implements CompactionManifest
 
             Predicate<SSTableReader> predicate = maxOverlappingLevel == 0
                                                  ? Predicates.not(suspectP)
-                                                 : Predicates.and(Predicates.not(Predicates.in(compactingL0)), Predicates.not(suspectP));
+                                                 : Predicates.not(Predicates.or(Predicates.in(compactingL0), suspectP));
 
             Iterables.addAll(remaining, Iterables.filter(getLevel(level), predicate));
             // If we are already at the max overlapping level, we have to make sure that we do not overlap with any
