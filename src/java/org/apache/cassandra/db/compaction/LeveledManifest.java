@@ -26,6 +26,7 @@ import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Ints;
 
@@ -144,8 +145,6 @@ public class LeveledManifest implements CompactionManifest
             generations[0].add(reader);
         }
     }
-
-
 
     public synchronized void replace(Collection<SSTableReader> removed, Collection<SSTableReader> added)
     {
@@ -432,7 +431,7 @@ public class LeveledManifest implements CompactionManifest
                                                                                     options.bucketHigh,
                                                                                     options.bucketLow,
                                                                                     options.minSSTableSize);
-        return SizeTieredCompactionStrategy.mostInterestingBucket(buckets, 4, 32);
+        return SizeTieredCompactionStrategy.mostInterestingBucket(buckets, cfs.getMinimumCompactionThreshold(), cfs.getMaximumCompactionThreshold());
     }
 
     /**
@@ -572,6 +571,29 @@ public class LeveledManifest implements CompactionManifest
         return overlapping(sstable.first.getToken(), sstable.last.getToken(), others);
     }
 
+    private Set<SSTableReader> padCandidates(Set<SSTableReader> candidates, int level, int maxSize)
+    {
+        if (candidates.size() >= maxSize)
+            return candidates;
+
+        final Set<SSTableReader> compacting = cfs.getTracker().getCompacting();
+        Collection<SSTableReader> uplevelCandidates = getLevel(level + 1);
+        Collection<SSTableReader> filteredCandidates = Lists.newArrayList(Iterables.filter(uplevelCandidates, Predicates.not(Predicates.and(Predicates.in(compacting), suspectP))));
+        logger.trace("padding candidates for {} L{} compaction up to {} from {}; L{} has {}/{} candidates", tableId, level, maxSize, candidates.size(), level + 1, filteredCandidates.size(), uplevelCandidates.size());
+
+        Set<SSTableReader> potentialInclusions = overlapping(candidates, filteredCandidates);
+        if (potentialInclusions.size() + candidates.size() <= maxSize)
+        {
+            logger.trace("found {} padding candidates for {} L{} compaction", potentialInclusions.size(), tableId, level);
+            return Sets.union(candidates, potentialInclusions);
+        }
+        else
+        {
+            logger.trace("fully padded {} L{} compaction", tableId, level);
+            return Sets.union(candidates, new HashSet<>(ageSortedSSTables(potentialInclusions).subList(0, maxSize - candidates.size())));
+        }
+    }
+
     /**
      * @return sstables from @param sstables that contain keys between @param start and @param end, inclusive.
      */
@@ -648,13 +670,13 @@ public class LeveledManifest implements CompactionManifest
             last = newCandidate;
         }
 
+        if (candidates.isEmpty())
+        {
+            return Collections.emptyList();
+        }
+
         if (level == maxOverlappingLevel)
         {
-            if (candidates.isEmpty())
-            {
-                return Collections.emptyList();
-            }
-
             Collection<SSTableReader> nonOverlappingLevel = getLevel(level + 1);
 
             candidates = Sets.union(candidates, overlapping(candidates, nonOverlappingLevel));
@@ -664,7 +686,11 @@ public class LeveledManifest implements CompactionManifest
                 candidates = Collections.emptySet();
             }
         }
-        return candidates;
+
+        if (candidates.size() < cfs.getMinimumCompactionThreshold())
+            return Collections.emptyList();
+
+        return padCandidates(candidates, level, MAX_COMPACTING_OVERLAPPING);
     }
 
     /**
@@ -761,9 +787,13 @@ public class LeveledManifest implements CompactionManifest
                         return Collections.emptyList();
                     candidates = Sets.union(candidates, levelOverlapping);
                 }
+                else if (candidates.size() > cfs.getMinimumCompactionThreshold() && candidates.size() < MAX_COMPACTING_OVERLAPPING)
+                {
+                    candidates = padCandidates(candidates, 0, MAX_COMPACTING_OVERLAPPING);
+                }
             }
 
-            if (candidates.size() > 1)
+            if (candidates.size() > cfs.getMinimumCompactionThreshold())
                 return candidates;
         }
         else if (level < maxOverlappingLevel)
@@ -783,13 +813,16 @@ public class LeveledManifest implements CompactionManifest
             }
 
             Set<SSTableReader> compactingLevel = ImmutableSet.copyOf(Iterables.filter(getLevel(level), Predicates.in(compacting)));
+            Set<SSTableReader> compactingUplevel = ImmutableSet.copyOf(Iterables.filter(getLevel(level + 1), Predicates.in(compacting)));
 
             // look for a non-suspect keyspace to compact with, starting with where we left off last time,
             // and wrapping back to the beginning of the generation if necessary
             Set<SSTableReader> candidates = new HashSet<>();
             Set<SSTableReader> remaining = new HashSet<>();
+            Set<SSTableReader> uplevelRemaining = new HashSet<>();
 
             Iterables.addAll(remaining, Iterables.filter(getLevel(level), Predicates.and(Predicates.not(Predicates.in(compactingLevel)), Predicates.not(suspectP))));
+            Iterables.addAll(uplevelRemaining, Iterables.filter(getLevel(level + 1), Predicates.and(Predicates.not(Predicates.in(compactingUplevel)), Predicates.not(suspectP))));
 
             for (int i = 0; i < getLevel(level).size(); i++)
             {
@@ -799,10 +832,17 @@ public class LeveledManifest implements CompactionManifest
                     continue;
 
                 Set<SSTableReader> overlapping = overlapping(Collections.singleton(sstable), remaining);
-                for (SSTableReader candidate: overlapping)
+                for (SSTableReader candidate : overlapping)
                 {
                     candidates.add(candidate);
                     remaining.remove(candidate);
+                }
+
+                Set<SSTableReader> uplevelOverlapping = overlapping(candidates, uplevelRemaining);
+                for (SSTableReader candidate : uplevelOverlapping)
+                {
+                    candidates.add(candidate);
+                    uplevelRemaining.remove(candidate);
                 }
 
                 if (candidates.size() > MAX_COMPACTING_OVERLAPPING)
@@ -813,8 +853,8 @@ public class LeveledManifest implements CompactionManifest
                 }
             }
 
-            if (candidates.size() > 1)
-                return candidates;
+            if (candidates.size() > cfs.getMinimumCompactionThreshold())
+                return padCandidates(candidates, level, MAX_COMPACTING_OVERLAPPING);
         }
         else
         {
