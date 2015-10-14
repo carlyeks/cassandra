@@ -687,7 +687,7 @@ public class LeveledManifest implements CompactionManifest
             }
         }
 
-        if (candidates.size() < cfs.getMinimumCompactionThreshold())
+        if (candidates.size() <= 1)
             return Collections.emptyList();
 
         return padCandidates(candidates, level, MAX_COMPACTING_OVERLAPPING);
@@ -787,13 +787,13 @@ public class LeveledManifest implements CompactionManifest
                         return Collections.emptyList();
                     candidates = Sets.union(candidates, levelOverlapping);
                 }
-                else if (candidates.size() > cfs.getMinimumCompactionThreshold() && candidates.size() < MAX_COMPACTING_OVERLAPPING)
+                else if (candidates.size() > 1 && candidates.size() < MAX_COMPACTING_OVERLAPPING)
                 {
                     candidates = padCandidates(candidates, 0, MAX_COMPACTING_OVERLAPPING);
                 }
             }
 
-            if (candidates.size() > cfs.getMinimumCompactionThreshold())
+            if (candidates.size() > 1)
                 return candidates;
         }
         else if (level < maxOverlappingLevel)
@@ -853,7 +853,7 @@ public class LeveledManifest implements CompactionManifest
                 }
             }
 
-            if (candidates.size() > cfs.getMinimumCompactionThreshold())
+            if (candidates.size() > 1)
                 return padCandidates(candidates, level, MAX_COMPACTING_OVERLAPPING);
         }
         else
