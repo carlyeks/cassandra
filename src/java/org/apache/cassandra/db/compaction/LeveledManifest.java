@@ -717,12 +717,65 @@ public class LeveledManifest implements CompactionManifest
         // If we are pushing *from* L0, we want to take the files which have been hanging around the longest, because *all* of the files will overlap as much as the next.
         if (level == 0)
         {
+            logger.trace("{} L0 check", tableId);
             Set<SSTableReader> compactingL0 = getCompacting(0);
 
-            PartitionPosition lastCompactingKey = null;
-            PartitionPosition firstCompactingKey = null;
-            if (maxOverlappingLevel == 0)
+            Set<SSTableReader> candidates = new HashSet<>();
+            Set<SSTableReader> remaining = new HashSet<>();
+
+            Iterables.addAll(remaining, Iterables.filter(getLevel(0), Predicates.not(suspectP)));
+
+            int possibles = remaining.size();
+            if (maxOverlappingLevel != 0)
             {
+                for (SSTableReader sstable : ageSortedSSTables(remaining))
+                {
+                    if (candidates.contains(sstable))
+                        continue;
+
+                    if (compactingL0.contains(sstable))
+                        continue;
+
+                    Sets.SetView<SSTableReader> overlappedL0 = Sets.union(Collections.singleton(sstable), overlapping(sstable, remaining));
+
+                    for (SSTableReader newCandidate : overlappedL0)
+                    {
+                        if (!compactingL0.contains(newCandidate))
+                            candidates.add(newCandidate);
+
+                        remaining.remove(newCandidate);
+                    }
+
+                    if (candidates.size() > MAX_COMPACTING_OVERLAPPING)
+                    {
+                        // limit to only the MAX_COMPACTING_OVERLAPPING oldest candidates
+                        candidates = new HashSet<>(ageSortedSSTables(candidates).subList(0, MAX_COMPACTING_OVERLAPPING));
+                        break;
+                    }
+                }
+                logger.trace("Considered {} for {} L0 overlapping compaction, but was filtered down to {}", possibles, tableId, candidates.size());
+
+                // leave everything in L0 if we didn't end up with a full sstable's worth of data
+                if (SSTableReader.getTotalBytes(candidates) < maxSSTableSizeInBytes)
+                {
+                    return Collections.emptyList();
+                }
+
+                if (candidates.size() > MAX_COMPACTING_OVERLAPPING)
+                {
+                    // limit to only the MAX_COMPACTING_OVERLAPPING oldest candidates
+                    candidates = new HashSet<>(ageSortedSSTables(candidates).subList(0, MAX_COMPACTING_OVERLAPPING));
+                }
+                else if (candidates.size() > 1)
+                {
+                    candidates = padCandidates(candidates, 0, MAX_COMPACTING_OVERLAPPING);
+                }
+            }
+            else
+            {
+                PartitionPosition lastCompactingKey = null;
+                PartitionPosition firstCompactingKey = null;
+
                 for (SSTableReader candidate : compactingL0)
                 {
                     if (firstCompactingKey == null || candidate.first.compareTo(firstCompactingKey) < 0)
@@ -730,25 +783,7 @@ public class LeveledManifest implements CompactionManifest
                     if (lastCompactingKey == null || candidate.last.compareTo(lastCompactingKey) > 0)
                         lastCompactingKey = candidate.last;
                 }
-            }
 
-            Set<SSTableReader> candidates = new HashSet<>();
-            Set<SSTableReader> remaining = new HashSet<>();
-
-            Predicate<SSTableReader> predicate = maxOverlappingLevel == 0
-                                                 ? Predicates.not(suspectP)
-                                                 : Predicates.not(Predicates.or(Predicates.in(compactingL0), suspectP));
-
-            Iterables.addAll(remaining, Iterables.filter(getLevel(level), predicate));
-            // If we are already at the max overlapping level, we have to make sure that we do not overlap with any
-            // current compactions. If we aren't yet and we could compact the whole level, we can shortcut the
-            // checks and just include all of them.
-            if (maxOverlappingLevel != 0 && remaining.size() < MAX_COMPACTING_OVERLAPPING)
-            {
-                candidates = remaining;
-            }
-            else
-            {
                 for (SSTableReader sstable : ageSortedSSTables(remaining))
                 {
                     if (candidates.contains(sstable))
@@ -761,7 +796,7 @@ public class LeveledManifest implements CompactionManifest
 
                     for (SSTableReader newCandidate : overlappedL0)
                     {
-                        if (maxOverlappingLevel != 0 || firstCompactingKey == null || lastCompactingKey == null || overlapping(firstCompactingKey.getToken(), lastCompactingKey.getToken(), Arrays.asList(newCandidate)).size() == 0)
+                        if (firstCompactingKey == null || lastCompactingKey == null || overlapping(firstCompactingKey.getToken(), lastCompactingKey.getToken(), Arrays.asList(newCandidate)).size() == 0)
                             candidates.add(newCandidate);
                         remaining.remove(newCandidate);
                     }
@@ -773,6 +808,7 @@ public class LeveledManifest implements CompactionManifest
                         break;
                     }
                 }
+                logger.trace("Considered {} for {} L0 nonoverlapping compaction, but was filtered down to {}", possibles, tableId, candidates.size());
 
                 // leave everything in L0 if we didn't end up with a full sstable's worth of data
                 if (SSTableReader.getTotalBytes(candidates) < maxSSTableSizeInBytes)
@@ -780,17 +816,10 @@ public class LeveledManifest implements CompactionManifest
                     return Collections.emptyList();
                 }
 
-                if (maxOverlappingLevel == 0)
-                {
-                    Set<SSTableReader> levelOverlapping = overlapping(candidates, getLevel(level + 1));
-                    if (Sets.intersection(levelOverlapping, compacting).size() > 0)
-                        return Collections.emptyList();
-                    candidates = Sets.union(candidates, levelOverlapping);
-                }
-                else if (candidates.size() > 1 && candidates.size() < MAX_COMPACTING_OVERLAPPING)
-                {
-                    candidates = padCandidates(candidates, 0, MAX_COMPACTING_OVERLAPPING);
-                }
+                Set<SSTableReader> levelOverlapping = overlapping(candidates, getLevel(level + 1));
+                if (Sets.intersection(levelOverlapping, compacting).size() > 0)
+                    return Collections.emptyList();
+                candidates = Sets.union(candidates, levelOverlapping);
             }
 
             if (candidates.size() > 1)
@@ -798,6 +827,7 @@ public class LeveledManifest implements CompactionManifest
         }
         else if (level < maxOverlappingLevel)
         {
+            logger.trace("{} L{} MOLO check", tableId, level);
             // for non-overlapping compactions, pick up where we left off last time
             Collections.sort(getLevel(level), SSTableReader.sstableComparator);
 
@@ -858,6 +888,7 @@ public class LeveledManifest implements CompactionManifest
         }
         else
         {
+            logger.trace("{} L{} unoverlapping check", tableId, level);
             // for non-overlapping compactions, pick up where we left off last time
             Collections.sort(getLevel(level), SSTableReader.sstableComparator);
             int start = 0; // handles case where the prior compaction touched the very last range
