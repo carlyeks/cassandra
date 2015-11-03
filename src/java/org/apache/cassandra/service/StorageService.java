@@ -1309,11 +1309,6 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return isBootstrapMode;
     }
 
-    public boolean isSurveyMode()
-    {
-        return isSurveyMode;
-    }
-
     public TokenMetadata getTokenMetadata()
     {
         return tokenMetadata;
@@ -3871,6 +3866,16 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public boolean isStarting()
     {
         return operationMode == Mode.STARTING;
+    }
+
+    public boolean isMoving()
+    {
+        return operationMode == Mode.MOVING;
+    }
+
+    public boolean isJoining()
+    {
+        return operationMode == Mode.JOINING;
     }
 
     public String getDrainProgress()
