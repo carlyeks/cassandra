@@ -27,20 +27,19 @@ import java.util.concurrent.TimeUnit;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
-
-import org.apache.cassandra.db.Directories;
-import org.apache.cassandra.db.compaction.writers.CompactionAwareWriter;
-import org.apache.cassandra.db.compaction.writers.DefaultCompactionWriter;
-import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.compaction.CompactionManager.CompactionExecutorStatsCollector;
+import org.apache.cassandra.db.compaction.writers.CompactionAwareWriter;
+import org.apache.cassandra.db.compaction.writers.DefaultCompactionWriter;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
+import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.concurrent.Refs;
@@ -48,20 +47,22 @@ import org.apache.cassandra.utils.concurrent.Refs;
 public class CompactionTask extends AbstractCompactionTask
 {
     protected static final Logger logger = LoggerFactory.getLogger(CompactionTask.class);
+    protected final AbstractCompactionStrategy strategy;
     protected final int gcBefore;
     protected final boolean offline;
     protected final boolean keepOriginals;
     protected static long totalBytesCompacted = 0;
     private CompactionExecutorStatsCollector collector;
 
-    public CompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int gcBefore)
+    public CompactionTask(AbstractCompactionStrategy strategy, ColumnFamilyStore cfs, LifecycleTransaction txn, int gcBefore)
     {
-        this(cfs, txn, gcBefore, false, false);
+        this(strategy, cfs, txn, gcBefore, false, false);
     }
 
-    public CompactionTask(ColumnFamilyStore cfs, LifecycleTransaction txn, int gcBefore, boolean offline, boolean keepOriginals)
+    public CompactionTask(AbstractCompactionStrategy strategy, ColumnFamilyStore cfs, LifecycleTransaction txn, int gcBefore, boolean offline, boolean keepOriginals)
     {
         super(cfs, txn);
+        this.strategy = strategy;
         this.gcBefore = gcBefore;
         this.offline = offline;
         this.keepOriginals = keepOriginals;
@@ -146,6 +147,7 @@ public class CompactionTask extends AbstractCompactionTask
         logger.debug("Compacting ({}) {}", taskId, ssTableLoggerMsg);
 
         long start = System.nanoTime();
+        long starttime = System.currentTimeMillis();
         long totalKeysWritten = 0;
         long estimatedKeys = 0;
         try (CompactionController controller = getCompactionController(transaction.originals()))
@@ -202,7 +204,8 @@ public class CompactionTask extends AbstractCompactionTask
             }
 
             // log a bunch of statistics about the result and save to system table compaction_history
-            long dTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+            long endtime = System.currentTimeMillis();
+            long duration = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
             long startsize = SSTableReader.getTotalBytes(transaction.originals());
             long endsize = SSTableReader.getTotalBytes(newSStables);
             double ratio = (double) endsize / (double) startsize;
@@ -211,13 +214,17 @@ public class CompactionTask extends AbstractCompactionTask
             for (SSTableReader reader : newSStables)
                 newSSTableNames.append(reader.descriptor.baseFilename()).append(",");
 
-            double mbps = dTime > 0 ? (double) endsize / (1024 * 1024) / ((double) dTime / 1000) : 0;
+            double mbps = duration > 0 ? (double) endsize / (1024 * 1024) / ((double) duration / 1000) : 0;
             long totalSourceRows = 0;
             String mergeSummary = updateCompactionHistory(cfs.keyspace.getName(), cfs.getColumnFamilyName(), mergedRowCounts, startsize, endsize);
             logger.debug(String.format("Compacted (%s) %d sstables to [%s] to level=%d.  %,d bytes to %,d (~%d%% of original) in %,dms = %fMB/s.  %,d total partitions merged to %,d.  Partition merge counts were {%s}",
-                                      taskId, transaction.originals().size(), newSSTableNames.toString(), getLevel(), startsize, endsize, (int) (ratio * 100), dTime, mbps, totalSourceRows, totalKeysWritten, mergeSummary));
+                                       taskId, transaction.originals().size(), newSSTableNames.toString(), getLevel(), startsize, endsize, (int) (ratio * 100), duration, mbps, totalSourceRows, totalKeysWritten, mergeSummary));
             logger.trace(String.format("CF Total Bytes Compacted: %,d", CompactionTask.addToTotalBytesCompacted(endsize)));
-            logger.trace("Actual #keys: {}, Estimated #keys:{}, Err%: {}", totalKeysWritten, estimatedKeys, ((double)(totalKeysWritten - estimatedKeys)/totalKeysWritten));
+            logger.trace("Actual #keys: {}, Estimated #keys:{}, Err%: {}", totalKeysWritten, estimatedKeys, ((double) (totalKeysWritten - estimatedKeys) / totalKeysWritten));
+            CompactionLogger.getLogger(this.strategy, false)
+                            .compaction(this,
+                                        transaction.originals(), starttime, startsize,
+                                        newSStables, endtime, endsize);
 
             if (offline)
                 Refs.release(Refs.selfRefs(newSStables));
@@ -258,7 +265,7 @@ public class CompactionTask extends AbstractCompactionTask
 
     public static long getMinRepairedAt(Set<SSTableReader> actuallyCompact)
     {
-        long minRepairedAt= Long.MAX_VALUE;
+        long minRepairedAt = Long.MAX_VALUE;
         for (SSTableReader sstable : actuallyCompact)
             minRepairedAt = Math.min(minRepairedAt, sstable.getSSTableMetadata().repairedAt);
         if (minRepairedAt == Long.MAX_VALUE)

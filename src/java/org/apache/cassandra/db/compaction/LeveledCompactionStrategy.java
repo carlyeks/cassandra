@@ -42,6 +42,32 @@ import org.apache.cassandra.utils.FBUtilities;
 public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 {
     private static final Logger logger = LoggerFactory.getLogger(LeveledCompactionStrategy.class);
+    private static final CompactionStrategyLogger strategyLogger = new CompactionStrategyLogger<LeveledCompactionStrategy>()
+    {
+        public void begin(Conduit conduit, LeveledCompactionStrategy strategy)
+        {
+        }
+
+        public void end(Conduit conduit, LeveledCompactionStrategy strategy)
+        {
+        }
+
+        public void startCompaction(Conduit conduit, LeveledCompactionStrategy strategy, CompactionTask task)
+        {
+            conduit.add(task.getLevel());
+        }
+
+        public void finishCompaction(Conduit conduit, LeveledCompactionStrategy strategy, CompactionTask task)
+        {
+            conduit.add(task.getLevel());
+        }
+
+        public void format(Conduit conduit, LeveledCompactionStrategy strategy, SSTableReader reader)
+        {
+            conduit.add(reader.getSSTableLevel());
+        }
+    };
+
     private static final String SSTABLE_SIZE_OPTION = "sstable_size_in_mb";
 
     @VisibleForTesting
@@ -73,6 +99,11 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
         manifest = new LeveledManifest(cfs, this.maxSSTableSizeInMB, localOptions);
         logger.trace("Created {}", manifest);
+    }
+
+    public CompactionStrategyLogger getLogger()
+    {
+        return strategyLogger;
     }
 
     public int getLevelSize(int i)
@@ -118,7 +149,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             LifecycleTransaction txn = cfs.getTracker().tryModify(candidate.sstables, OperationType.COMPACTION);
             if (txn != null)
             {
-                LeveledCompactionTask newTask = new LeveledCompactionTask(cfs, txn, candidate.level, gcBefore, candidate.maxSSTableBytes, false);
+                LeveledCompactionTask newTask = new LeveledCompactionTask(this, cfs, txn, candidate.level, gcBefore, candidate.maxSSTableBytes, false);
                 newTask.setCompactionType(op);
                 return newTask;
             }
@@ -136,7 +167,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         LifecycleTransaction txn = cfs.getTracker().tryModify(filteredSSTables, OperationType.COMPACTION);
         if (txn == null)
             return null;
-        return Arrays.<AbstractCompactionTask>asList(new LeveledCompactionTask(cfs, txn, 0, gcBefore, getMaxSSTableBytes(), true));
+        return Arrays.<AbstractCompactionTask>asList(new LeveledCompactionTask(this, cfs, txn, 0, gcBefore, getMaxSSTableBytes(), true));
 
     }
 
@@ -159,7 +190,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             if (level != sstable.getSSTableLevel())
                 level = 0;
         }
-        return new LeveledCompactionTask(cfs, txn, level, gcBefore, maxSSTableBytes, false);
+        return new LeveledCompactionTask(this, cfs, txn, level, gcBefore, maxSSTableBytes, false);
     }
 
     /**
@@ -208,7 +239,9 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
     public int getEstimatedRemainingTasks()
     {
-        return manifest.getEstimatedTasks();
+        int estimate = manifest.getEstimatedTasks();
+        compactionLogger.pending(System.currentTimeMillis(), estimate);
+        return estimate;
     }
 
     public long getMaxSSTableBytes()

@@ -24,6 +24,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.RateLimiter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.db.SerializationHeader;
@@ -33,9 +35,6 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SSTableMultiWriter;
 import org.apache.cassandra.io.sstable.SimpleSSTableMultiWriter;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Memtable;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
@@ -58,17 +57,20 @@ import org.apache.cassandra.utils.JVMStabilityInspector;
 public abstract class AbstractCompactionStrategy
 {
     private static final Logger logger = LoggerFactory.getLogger(AbstractCompactionStrategy.class);
+    protected final CompactionLogger compactionLogger;
 
     protected static final float DEFAULT_TOMBSTONE_THRESHOLD = 0.2f;
     // minimum interval needed to perform tombstone removal compaction in seconds, default 86400 or 1 day.
     protected static final long DEFAULT_TOMBSTONE_COMPACTION_INTERVAL = 86400;
     protected static final boolean DEFAULT_UNCHECKED_TOMBSTONE_COMPACTION_OPTION = false;
+    protected static final boolean DEFAULT_LOG_ALL_OPTION = false;
 
     protected static final String TOMBSTONE_THRESHOLD_OPTION = "tombstone_threshold";
     protected static final String TOMBSTONE_COMPACTION_INTERVAL_OPTION = "tombstone_compaction_interval";
     // disable range overlap check when deciding if an SSTable is candidate for tombstone compaction (CASSANDRA-6563)
     protected static final String UNCHECKED_TOMBSTONE_COMPACTION_OPTION = "unchecked_tombstone_compaction";
     protected static final String COMPACTION_ENABLED = "enabled";
+    protected static final String LOG_ALL_OPTION = "log_all";
     public static final String ONLY_PURGE_REPAIRED_TOMBSTONES = "only_purge_repaired_tombstones";
 
     protected Map<String, String> options;
@@ -78,6 +80,7 @@ public abstract class AbstractCompactionStrategy
     protected long tombstoneCompactionInterval;
     protected boolean uncheckedTombstoneCompaction;
     protected boolean disableTombstoneCompactions = false;
+    protected boolean logAll;
 
     private final Directories directories;
 
@@ -110,6 +113,8 @@ public abstract class AbstractCompactionStrategy
             tombstoneCompactionInterval = optionValue == null ? DEFAULT_TOMBSTONE_COMPACTION_INTERVAL : Long.parseLong(optionValue);
             optionValue = options.get(UNCHECKED_TOMBSTONE_COMPACTION_OPTION);
             uncheckedTombstoneCompaction = optionValue == null ? DEFAULT_UNCHECKED_TOMBSTONE_COMPACTION_OPTION : Boolean.parseBoolean(optionValue);
+            optionValue = options.get(LOG_ALL_OPTION);
+            logAll = optionValue == null ? DEFAULT_LOG_ALL_OPTION : Boolean.parseBoolean(optionValue);
             if (!shouldBeEnabled())
                 this.disable();
         }
@@ -119,9 +124,16 @@ public abstract class AbstractCompactionStrategy
             tombstoneThreshold = DEFAULT_TOMBSTONE_THRESHOLD;
             tombstoneCompactionInterval = DEFAULT_TOMBSTONE_COMPACTION_INTERVAL;
             uncheckedTombstoneCompaction = DEFAULT_UNCHECKED_TOMBSTONE_COMPACTION_OPTION;
+            logAll = DEFAULT_LOG_ALL_OPTION;
         }
 
+        this.compactionLogger = CompactionLogger.getLogger(this, logAll);
         directories = new Directories(cfs.metadata, Directories.dataDirectories);
+    }
+
+    public CompactionStrategyLogger getLogger()
+    {
+        return CompactionStrategyLogger.NoLogger;
     }
 
     public Directories getDirectories()
@@ -161,6 +173,7 @@ public abstract class AbstractCompactionStrategy
     public void shutdown()
     {
         isActive = false;
+        compactionLogger.shutdown();
     }
 
     /**
@@ -195,7 +208,7 @@ public abstract class AbstractCompactionStrategy
 
     public AbstractCompactionTask getCompactionTask(LifecycleTransaction txn, final int gcBefore, long maxSSTableBytes)
     {
-        return new CompactionTask(cfs, txn, gcBefore);
+        return new CompactionTask(this, cfs, txn, gcBefore);
     }
 
     /**
@@ -317,9 +330,15 @@ public abstract class AbstractCompactionStrategy
 
     public abstract void removeSSTable(SSTableReader sstable);
 
+    public void setManagerType(String managerType)
+    {
+        this.compactionLogger.setManagerType(managerType);
+    }
+
     public static class ScannerList implements AutoCloseable
     {
         public final List<ISSTableScanner> scanners;
+
         public ScannerList(List<ISSTableScanner> scanners)
         {
             this.scanners = scanners;
@@ -357,7 +376,7 @@ public abstract class AbstractCompactionStrategy
      * Check if given sstable is worth dropping tombstones at gcBefore.
      * Check is skipped if tombstone_compaction_interval time does not elapse since sstable creation and returns false.
      *
-     * @param sstable SSTable to check
+     * @param sstable  SSTable to check
      * @param gcBefore time to drop tombstones
      * @return true if given sstable's tombstones are expected to be removed
      */
@@ -369,7 +388,7 @@ public abstract class AbstractCompactionStrategy
         // if that happens we will end up in infinite compaction loop, so first we check enough if enough time has
         // elapsed since SSTable created.
         if (System.currentTimeMillis() < sstable.getCreationTimeFor(Component.DATA) + tombstoneCompactionInterval * 1000)
-           return false;
+            return false;
 
         double droppableRatio = sstable.getEstimatedDroppableTombstoneRatio(gcBefore);
         if (droppableRatio <= tombstoneThreshold)
@@ -452,7 +471,7 @@ public abstract class AbstractCompactionStrategy
         if (unchecked != null)
         {
             if (!unchecked.equalsIgnoreCase("true") && !unchecked.equalsIgnoreCase("false"))
-                throw new ConfigurationException(String.format("'%s' should be either 'true' or 'false', not '%s'",UNCHECKED_TOMBSTONE_COMPACTION_OPTION, unchecked));
+                throw new ConfigurationException(String.format("'%s' should be either 'true' or 'false', not '%s'", UNCHECKED_TOMBSTONE_COMPACTION_OPTION, unchecked));
         }
 
         String compactionEnabled = options.get(COMPACTION_ENABLED);
@@ -463,11 +482,21 @@ public abstract class AbstractCompactionStrategy
                 throw new ConfigurationException(String.format("enabled should either be 'true' or 'false', not %s", compactionEnabled));
             }
         }
+
+        String compactionLogAll = options.get(LOG_ALL_OPTION);
+        if (compactionLogAll != null)
+        {
+            if (!compactionLogAll.equalsIgnoreCase("true") && !compactionLogAll.equalsIgnoreCase("false"))
+            {
+                throw new ConfigurationException(String.format("log_all should either be 'true' or 'false', not %s", compactionLogAll));
+            }
+        }
         Map<String, String> uncheckedOptions = new HashMap<String, String>(options);
         uncheckedOptions.remove(TOMBSTONE_THRESHOLD_OPTION);
         uncheckedOptions.remove(TOMBSTONE_COMPACTION_INTERVAL_OPTION);
         uncheckedOptions.remove(UNCHECKED_TOMBSTONE_COMPACTION_OPTION);
         uncheckedOptions.remove(COMPACTION_ENABLED);
+        uncheckedOptions.remove(LOG_ALL_OPTION);
         uncheckedOptions.remove(ONLY_PURGE_REPAIRED_TOMBSTONES);
         return uncheckedOptions;
     }

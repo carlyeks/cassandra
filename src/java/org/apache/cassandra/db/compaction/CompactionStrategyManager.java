@@ -486,7 +486,9 @@ public class CompactionStrategyManager implements INotificationConsumer
         if (unrepaired != null)
             unrepaired.shutdown();
         repaired = CFMetaData.createCompactionStrategyInstance(cfs, params);
+        repaired.setManagerType("repaired");
         unrepaired = CFMetaData.createCompactionStrategyInstance(cfs, params);
+        unrepaired.setManagerType("unrepaired");
         this.params = params;
     }
 
@@ -516,5 +518,13 @@ public class CompactionStrategyManager implements INotificationConsumer
         {
             return repaired.createSSTableMultiWriter(descriptor, keyCount, repairedAt, collector, header, indexes, txn);
         }
+    }
+
+    /**
+     * This is the strategy which will be responsible for freshly flushed sstables.
+     */
+    public AbstractCompactionStrategy getFlushStrategy()
+    {
+        return unrepaired;
     }
 }

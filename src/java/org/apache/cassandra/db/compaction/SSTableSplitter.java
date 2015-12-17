@@ -60,7 +60,7 @@ public class SSTableSplitter {
 
         public SplittingCompactionTask(ColumnFamilyStore cfs, LifecycleTransaction transaction, int sstableSizeInMB)
         {
-            super(cfs, transaction, CompactionManager.NO_GC, true, false);
+            super(cfs.getCompactionStrategyManager().getStrategies().get(0), cfs, transaction, CompactionManager.NO_GC, true, false);
             this.sstableSizeInMB = sstableSizeInMB;
 
             if (sstableSizeInMB <= 0)

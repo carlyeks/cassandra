@@ -161,4 +161,14 @@ public interface ColumnFamilyStoreMBean
      * @return top <i>count</i> items for the sampler since beginLocalSampling was called
      */
     public CompositeData finishLocalSampling(String sampler, int count) throws OpenDataException;
+
+    /**
+     * This will enable the compaction logging for all compaction strategies on this column family.
+     */
+    public void enableCompactionLogging();
+
+    /**
+     * This will disable the compaction logging for all compaction strategies on this column family.
+     */
+    public void disableCompactionLogging();
 }

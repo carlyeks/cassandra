@@ -34,6 +34,7 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.commitlog.ReplayPosition;
+import org.apache.cassandra.db.compaction.CompactionLogger;
 import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.db.filter.ClusteringIndexFilter;
 import org.apache.cassandra.db.filter.ColumnFilter;
@@ -400,6 +401,9 @@ public class Memtable implements Comparable<Memtable>
 
                     // sstables should contain non-repaired data.
                     ssTables = writer.finish(true);
+
+                    CompactionLogger.getLogger(cfs.getCompactionStrategyManager().getFlushStrategy(), false)
+                                    .completedFlush(ssTables);
                 }
                 else
                 {

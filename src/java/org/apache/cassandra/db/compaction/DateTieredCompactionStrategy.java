@@ -38,6 +38,31 @@ import static com.google.common.collect.Iterables.filter;
 public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
 {
     private static final Logger logger = LoggerFactory.getLogger(DateTieredCompactionStrategy.class);
+    private static final CompactionStrategyLogger strategyLogger = new CompactionStrategyLogger<DateTieredCompactionStrategy>()
+    {
+        public void begin(Conduit conduit, DateTieredCompactionStrategy strategy)
+        {
+            conduit.add(strategy.options.baseTime);
+        }
+
+        public void end(Conduit conduit, DateTieredCompactionStrategy strategy)
+        {
+        }
+
+        public void startCompaction(Conduit conduit, DateTieredCompactionStrategy strategy, CompactionTask task)
+        {
+        }
+
+        public void finishCompaction(Conduit conduit, DateTieredCompactionStrategy strategy, CompactionTask task)
+        {
+        }
+
+        public void format(Conduit conduit, DateTieredCompactionStrategy strategy, SSTableReader reader)
+        {
+            conduit.add(reader.getMinTimestamp());
+            conduit.add(reader.getMaxTimestamp());
+        }
+    };
 
     private final DateTieredCompactionStrategyOptions options;
     protected volatile int estimatedRemainingTasks;
@@ -74,7 +99,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
 
             LifecycleTransaction modifier = cfs.getTracker().tryModify(latestBucket, OperationType.COMPACTION);
             if (modifier != null)
-                return new CompactionTask(cfs, modifier, gcBefore);
+                return new CompactionTask(this, cfs, modifier, gcBefore);
         }
     }
 
@@ -212,6 +237,12 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
     {
         sstables.remove(sstable);
     }
+
+    public CompactionStrategyLogger getLogger()
+    {
+        return strategyLogger;
+    }
+
     /**
      * A target time span used for bucketing SSTables based on timestamps.
      */
@@ -340,6 +371,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
                 if (stcsBucket.size() >= cfs.getMinimumCompactionThreshold())
                     n += Math.ceil((double)stcsBucket.size() / cfs.getMaximumCompactionThreshold());
         }
+        compactionLogger.pending(System.currentTimeMillis(), n);
         estimatedRemainingTasks = n;
     }
 
@@ -394,7 +426,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
         if (modifier == null)
             return null;
 
-        return Collections.<AbstractCompactionTask>singleton(new CompactionTask(cfs, modifier, gcBefore));
+        return Collections.<AbstractCompactionTask>singleton(new CompactionTask(this, cfs, modifier, gcBefore));
     }
 
     @Override
@@ -410,7 +442,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
             return null;
         }
 
-        return new CompactionTask(cfs, modifier, gcBefore).setUserDefined(true);
+        return new CompactionTask(this, cfs, modifier, gcBefore).setUserDefined(true);
     }
 
     public int getEstimatedRemainingTasks()

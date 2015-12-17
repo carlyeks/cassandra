@@ -1821,6 +1821,16 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         CompactionManager.instance.performMaximal(this, splitOutput);
     }
 
+    public void enableCompactionLogging()
+    {
+        CompactionLogger.enableFor(this);
+    }
+
+    public void disableCompactionLogging()
+    {
+        CompactionLogger.disableFor(this);
+    }
+
     public static Iterable<ColumnFamilyStore> all()
     {
         List<Iterable<ColumnFamilyStore>> stores = new ArrayList<Iterable<ColumnFamilyStore>>(Schema.instance.getKeyspaces().size());
