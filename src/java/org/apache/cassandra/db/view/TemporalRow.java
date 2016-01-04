@@ -22,6 +22,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -279,9 +280,7 @@ public class TemporalRow
         this.nowInSec = nowInSec;
 
         LivenessInfo liveness = row.primaryKeyLivenessInfo();
-        this.viewClusteringLocalDeletionTime = minValueIfSet(viewClusteringLocalDeletionTime, row.deletion().time().localDeletionTime(), NO_DELETION_TIME);
-        this.viewClusteringTimestamp = minValueIfSet(viewClusteringTimestamp, liveness.timestamp(), NO_TIMESTAMP);
-        this.viewClusteringTtl = minValueIfSet(viewClusteringTtl, liveness.ttl(), NO_TTL);
+        updateLiveness(liveness.ttl(), liveness.timestamp(), row.deletion().time().localDeletionTime());
 
         List<ColumnDefinition> clusteringDefs = baseCfs.metadata.clusteringColumns();
         clusteringColumns = new HashMap<>();
@@ -293,6 +292,24 @@ public class TemporalRow
 
             addColumnValue(cdef.name, null, NO_TIMESTAMP, NO_TTL, NO_DELETION_TIME, row.clustering().get(i), isNew);
         }
+    }
+
+    /*
+     * PK ts:5, ttl:1, deletion: 2
+     * Col ts:4, ttl:2, deletion: 3
+     *
+     * TTL use min, since it expires at the lowest time which we are expiring. If we have the above values, we
+     * would want to return 1, since the base row expires in 1 second.
+     *
+     * Timestamp uses max, as this is the time that the row has been written to the view. See CASSANDRA-10910.
+     *
+     * Deletion Timestamp should use max, as this deletion will cover all previous values written.
+     */
+    private void updateLiveness(int ttl, long timestamp, int localDeletionTime)
+    {
+        this.viewClusteringTtl = valueIfSet(viewClusteringTtl, ttl, NO_TTL, Comparator.naturalOrder());
+        this.viewClusteringTimestamp = valueIfSet(viewClusteringTimestamp, timestamp, NO_TIMESTAMP, Comparator.naturalOrder());
+        this.viewClusteringLocalDeletionTime = valueIfSet(viewClusteringLocalDeletionTime, localDeletionTime, NO_DELETION_TIME, Comparator.reverseOrder());
     }
 
     @Override
@@ -351,30 +368,19 @@ public class TemporalRow
         // If this column is part of the view's primary keys
         if (viewPrimaryKey.contains(identifier))
         {
-            this.viewClusteringTtl = minValueIfSet(this.viewClusteringTtl, ttl, NO_TTL);
-            this.viewClusteringTimestamp = minValueIfSet(this.viewClusteringTimestamp, timestamp, NO_TIMESTAMP);
-            this.viewClusteringLocalDeletionTime = minValueIfSet(this.viewClusteringLocalDeletionTime, localDeletionTime, NO_DELETION_TIME);
+            updateLiveness(ttl, timestamp, localDeletionTime);
         }
 
         innerMap.get(cellPath).setVersion(new TemporalCell(value, timestamp, ttl, localDeletionTime, isNew));
     }
 
-    private static int minValueIfSet(int existing, int update, int defaultValue)
+    private static <T> T valueIfSet(T existing, T update, T defaultValue, Comparator<T> comparator)
     {
-        if (existing == defaultValue)
+        if (existing.equals(defaultValue))
             return update;
-        if (update == defaultValue)
+        if (update.equals(defaultValue))
             return existing;
-        return Math.min(existing, update);
-    }
-
-    private static long minValueIfSet(long existing, long update, long defaultValue)
-    {
-        if (existing == defaultValue)
-            return update;
-        if (update == defaultValue)
-            return existing;
-        return Math.min(existing, update);
+        return comparator.compare(existing, update) > 0 ? existing : update;
     }
 
     public int viewClusteringTtl()
