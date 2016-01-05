@@ -1,4 +1,5 @@
 3.0.3
+ * Fix potential assertion error during compaction (CASSANDRA-10944)
  * Fix counting of received sstables in streaming (CASSANDRA-10949)
  * Implement hints compression (CASSANDRA-9428)
  * Fix potential assertion error when reading static columns (CASSANDRA-10903)
@@ -7,9 +8,13 @@
  * Reduce heap spent when receiving many SSTables (CASSANDRA-10797)
  * Add back support for 3rd party auth providers to bulk loader (CASSANDRA-10873)
  * Eliminate the dependency on jgrapht for UDT resolution (CASSANDRA-10653)
- * (Hadoop) Close Clusters and Sessions in Hadoop Input/Output classes (CASSANDRA-1837)
+ * (Hadoop) Close Clusters and Sessions in Hadoop Input/Output classes (CASSANDRA-10837)
  * Fix sstableloader not working with upper case keyspace name (CASSANDRA-10806)
 Merged from 2.2:
+ * Enable GC logging by default (CASSANDRA-10140)
+ * Optimize pending range computation (CASSANDRA-9258)
+ * Skip commit log and saved cache directories in SSTable version startup check (CASSANDRA-10902)
+ * drop/alter user should be case sensitive (CASSANDRA-10817)
  * jemalloc detection fails due to quoting issues in regexv (CASSANDRA-10946)
  * (cqlsh) show correct column names for empty result sets (CASSANDRA-9813)
  * Add new types to Stress (CASSANDRA-9556)
