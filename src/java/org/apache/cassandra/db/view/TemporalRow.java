@@ -303,13 +303,20 @@ public class TemporalRow
      *
      * Timestamp uses max, as this is the time that the row has been written to the view. See CASSANDRA-10910.
      *
-     * Deletion Timestamp should use max, as this deletion will cover all previous values written.
+     * Local Deletion Time should use max, as this deletion will cover all previous values written.
      */
+    @SuppressWarnings("unchecked")
     private void updateLiveness(int ttl, long timestamp, int localDeletionTime)
     {
-        this.viewClusteringTtl = valueIfSet(viewClusteringTtl, ttl, NO_TTL, Comparator.naturalOrder());
-        this.viewClusteringTimestamp = valueIfSet(viewClusteringTimestamp, timestamp, NO_TIMESTAMP, Comparator.naturalOrder());
-        this.viewClusteringLocalDeletionTime = valueIfSet(viewClusteringLocalDeletionTime, localDeletionTime, NO_DELETION_TIME, Comparator.reverseOrder());
+        // We are returning whichever is higher from valueIfSet
+        // Natural order will return the max: 1.compareTo(2) < 0, so 2 is returned
+        // Reverse order will return the min: 1.compareTo(2) > 0, so 1 is returned
+        final Comparator max = Comparator.naturalOrder();
+        final Comparator min = Comparator.reverseOrder();
+
+        this.viewClusteringTtl = valueIfSet(viewClusteringTtl, ttl, NO_TTL, min);
+        this.viewClusteringTimestamp = valueIfSet(viewClusteringTimestamp, timestamp, NO_TIMESTAMP, max);
+        this.viewClusteringLocalDeletionTime = valueIfSet(viewClusteringLocalDeletionTime, localDeletionTime, NO_DELETION_TIME, max);
     }
 
     @Override
@@ -374,6 +381,20 @@ public class TemporalRow
         innerMap.get(cellPath).setVersion(new TemporalCell(value, timestamp, ttl, localDeletionTime, isNew));
     }
 
+    /**
+     * @return
+     * <ul>
+     *     <li>
+     *         If both existing and update are defaultValue, return defaultValue
+     *     </li>
+     *     <li>
+     *         If only one of existing or existing are defaultValue, return the one which is not
+     *     </li>
+     *     <li>
+     *         If both existing and update are not defaultValue, compare using comparator and return the higher one.
+     *     </li>
+     * </ul>
+     */
     private static <T> T valueIfSet(T existing, T update, T defaultValue, Comparator<T> comparator)
     {
         if (existing.equals(defaultValue))
