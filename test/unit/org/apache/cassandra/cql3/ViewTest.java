@@ -278,7 +278,7 @@ public class ViewTest extends CQLTester
     public void testRegularColumnTimestampUpdates() throws Throwable
     {
         // Regression test for CASSANDRA-10910
-        
+
         createTable("CREATE TABLE %s (" +
                     "k int PRIMARY KEY, " +
                     "c int, " +
