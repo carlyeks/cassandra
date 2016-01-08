@@ -24,6 +24,12 @@ import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 
+/*
+ * This class only knows about Tracing and ClientWarn, so if any different executor locals are added, it must be
+ * updated.
+ *
+ * We don't enumerate the ExecutorLocal.all array each time because it would be much slower.
+ */
 public class ExecutorLocals
 {
     private static final ExecutorLocal<TraceState> tracing = Tracing.instance;
@@ -44,6 +50,14 @@ public class ExecutorLocals
         : "ExecutorLocals has not been updated to reflect new ExecutorLocal.all";
     }
 
+    /**
+     * This creates a new ExecutorLocals object based on what is already set.
+     *
+     * @return an ExecutorLocals object which has the trace state and client warn state captured if either has been set,
+     *         or null if both are unset. The null result short-circuits logic in
+     *         {@link AbstractLocalAwareExecutorService#newTaskFor(Runnable, Object, ExecutorLocals)}, preventing
+     *         unnecessarily calling {@link ExecutorLocals#set(ExecutorLocals)}.
+     */
     public static ExecutorLocals create()
     {
         TraceState traceState = tracing.get();

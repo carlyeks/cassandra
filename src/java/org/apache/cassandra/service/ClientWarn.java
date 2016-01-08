@@ -28,6 +28,7 @@ public class ClientWarn implements ExecutorLocal<ClientWarn.State>
     private static final String TRUNCATED = " [truncated]";
     private static final ThreadLocal<ClientWarn.State> warnLocal = new ThreadLocal<>();
     public static ClientWarn instance = new ClientWarn();
+    
     private ClientWarn()
     {
     }
@@ -46,6 +47,7 @@ public class ClientWarn implements ExecutorLocal<ClientWarn.State>
         if (state != null)
             state.add(text);
     }
+
     public void captureWarnings()
     {
         warnLocal.set(new State());
