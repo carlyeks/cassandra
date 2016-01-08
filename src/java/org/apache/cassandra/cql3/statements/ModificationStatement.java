@@ -211,6 +211,16 @@ public abstract class ModificationStatement implements CQLStatement
         return ifExists;
     }
 
+    public boolean hasStaticConditions()
+    {
+        return staticConditions != null && !staticConditions.isEmpty();
+    }
+
+    public boolean hasRegularConditions()
+    {
+        return columnConditions != null && !columnConditions.isEmpty();
+    }
+
     private void addKeyValues(ColumnDefinition def, Restriction values) throws InvalidRequestException
     {
         if (def.kind == ColumnDefinition.Kind.CLUSTERING_COLUMN)

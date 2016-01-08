@@ -88,7 +88,11 @@ public class DeleteStatement extends ModificationStatement
 
     protected void validateWhereClauseForConditions() throws InvalidRequestException
     {
-        Iterator<ColumnDefinition> iterator = Iterators.concat(cfm.partitionKeyColumns().iterator(), cfm.clusteringColumns().iterator());
+        boolean onlyHasConditionsOnStaticColumns = hasStaticConditions() && !hasRegularConditions();
+
+        Iterator<ColumnDefinition> iterator = onlyHasConditionsOnStaticColumns
+                                              ? cfm.partitionKeyColumns().iterator()
+                                              : Iterators.concat(cfm.partitionKeyColumns().iterator(), cfm.clusteringColumns().iterator());
         while (iterator.hasNext())
         {
             ColumnDefinition def = iterator.next();
@@ -97,7 +101,8 @@ public class DeleteStatement extends ModificationStatement
             {
                 throw new InvalidRequestException(
                         String.format("DELETE statements must restrict all PRIMARY KEY columns with equality relations in order " +
-                                      "to use IF conditions, but column '%s' is not restricted", def.name));
+                                      "to use IF conditions%s, but column '%s' is not restricted",
+                                      onlyHasConditionsOnStaticColumns ? " on static columns" : "", def.name));
             }
         }
 
