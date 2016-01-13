@@ -311,6 +311,9 @@ public class InsertUpdateIfConditionTest extends CQLTester
                    row(false, 1, "k2", "newVal"));
     }
 
+    /**
+     * Test CASSANDRA-10532
+     */
     @Test
     public void testStaticColumnsCasDelete() throws Throwable
     {
@@ -330,15 +333,35 @@ public class InsertUpdateIfConditionTest extends CQLTester
                    row(1, 3, null, 4),
                    row(1, 5, null, 6),
                    row(1, 7, null, 8));
-        assertInvalidMessage("DELETE statements must restrict all PRIMARY KEY columns with equality relations in order " +
+        execute("INSERT INTO %s (pk, static_col) VALUES (?, ?)", 1, 1);
+
+        assertInvalidMessage("DELETE statements must restrict all PARTITION KEY columns with equality relations in order " +
                              "to use IF conditions on static columns, but column 'pk' is not restricted",
                              "DELETE static_col FROM %s WHERE ck = ? IF static_col = ?", 1, 1);
 
+        assertInvalidMessage("Invalid restriction on clustering column ck since the DELETE statement modifies only static columns",
+                             "DELETE static_col FROM %s WHERE pk = ? AND ck = ? IF static_col = ?", 1, 1, 1);
+
+        assertInvalidMessage("DELETE statements with IF conditions only on static columns must not delete non-static columns, " +
+                             "but column 'value' is specified for deletion",
+                             "DELETE static_col, value FROM %s WHERE pk = ? IF static_col = ?", 1, 1);
+
+        assertInvalidMessage("DELETE statements with IF conditions on non-static columns must not delete static columns, " +
+                             "but column 'static_col' is specified for deletion",
+                             "DELETE static_col FROM %s WHERE pk = ? AND ck = ? IF value = ?", 1, 1, 1);
+
         // DELETE of an underspecified PRIMARY KEY should not succeed if static is not only restriction
-        execute("INSERT INTO %s (pk, static_col) VALUES (?, ?)", 1, 1);
         assertInvalidMessage("DELETE statements must restrict all PRIMARY KEY columns with equality relations in order " +
                              "to use IF conditions, but column 'ck' is not restricted",
                              "DELETE static_col FROM %s WHERE pk = ? IF value = ? AND static_col = ?", 1, 2, 1);
+
+        assertRows(execute("DELETE value FROM %s WHERE pk = ? AND ck = ? IF value = ? AND static_col = ?", 1, 1, 2, 2), row(false, 2, 1));
+        assertRows(execute("DELETE value FROM %s WHERE pk = ? AND ck = ? IF value = ? AND static_col = ?", 1, 1, 2, 1), row(true));
+        assertRows(execute("SELECT pk, ck, static_col, value FROM %s WHERE pk = 1"),
+                   row(1, 1, 1, null),
+                   row(1, 3, 1, 4),
+                   row(1, 5, 1, 6),
+                   row(1, 7, 1, 8));
     }
 
     /**
