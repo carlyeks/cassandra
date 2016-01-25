@@ -24,6 +24,7 @@ import java.net.InetAddress;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -302,6 +303,27 @@ public class ViewTest extends CQLTester
         updateView("UPDATE %s USING TIMESTAMP 4 SET c = ? WHERE k = ?", 2, 0);
         updateView("UPDATE %s USING TIMESTAMP 3 SET val = ? WHERE k = ?", 2, 0);
         assertRows(execute("SELECT c, k, val FROM mv_rctstest"), row(2, 0, 2));
+    }
+
+    @Test
+    public void testReuseTimestamps() throws Throwable
+    {
+        createTable("CREATE TABLE %s (" +
+                    "k int PRIMARY KEY, " +
+                    "c int, " +
+                    "val int)");
+
+        execute("USE " + keyspace());
+        executeNet(protocolVersion, "USE " + keyspace());
+
+        createView("mv_reuse", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE k IS NOT NULL AND c IS NOT NULL PRIMARY KEY (k,c)");
+
+        updateView("INSERT INTO %s (k, c, val) VALUES (?, ?, ?) USING TIMESTAMP 0", 1, 1, 1);
+        updateView("UPDATE %s USING TIMESTAMP 1 SET c = ? WHERE k = ?", 0, 1);
+        assertRows(execute("SELECT c, k, val FROM mv_reuse"), row(0, 1, 1));
+        updateView("UPDATE %s USING TIMESTAMP 1 SET c = ? WHERE k = ?", 1, 1);
+        assertRows(execute("SELECT c, k, val FROM mv_reuse"),
+                   row(1, 1, 1));
     }
 
     @Test
@@ -828,7 +850,14 @@ public class ViewTest extends CQLTester
 
         createView("mv", "CREATE MATERIALIZED VIEW %s AS SELECT * FROM %%s WHERE c IS NOT NULL AND a IS NOT NULL AND b IS NOT NULL PRIMARY KEY (c, a, b)");
 
+        List<Integer> toInsert = new ArrayList<>();
         for (int i = 0; i < 50; i++)
+        {
+            toInsert.add(i);
+        }
+        Collections.shuffle(toInsert);
+
+        for (int i : toInsert)
         {
             updateView("INSERT INTO %s (a, b, c) VALUES (?, ?, ?) USING TIMESTAMP 1", 1, 1, i);
         }

@@ -27,6 +27,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -273,6 +274,9 @@ public class TemporalRow
     private long viewClusteringTimestamp = NO_TIMESTAMP;
     private int viewClusteringLocalDeletionTime = NO_DELETION_TIME;
 
+    private ColumnIdentifier baseRegularViewPrimaryColumn;
+    boolean viewTombstoneReplacement = false;
+
     TemporalRow(ColumnFamilyStore baseCfs, java.util.Set<ColumnIdentifier> viewPrimaryKey, ByteBuffer key, Row row, int nowInSec, boolean isNew)
     {
         this.baseCfs = baseCfs;
@@ -285,6 +289,7 @@ public class TemporalRow
         LivenessInfo liveness = row.primaryKeyLivenessInfo();
         updateLiveness(liveness.ttl(), liveness.timestamp(), row.deletion().time().localDeletionTime());
 
+        java.util.Set<ColumnIdentifier> columnPrimaryKey = new HashSet<>(viewPrimaryKey);
         List<ColumnDefinition> clusteringDefs = baseCfs.metadata.clusteringColumns();
         clusteringColumns = new HashMap<>();
 
@@ -292,8 +297,17 @@ public class TemporalRow
         {
             ColumnDefinition cdef = clusteringDefs.get(i);
             clusteringColumns.put(cdef.name, row.clustering().get(i));
+            columnPrimaryKey.remove(cdef.name);
 
             addColumnValue(cdef.name, null, NO_TIMESTAMP, NO_TTL, NO_DELETION_TIME, row.clustering().get(i), isNew);
+        }
+        for (ColumnDefinition cdef : baseCfs.metadata.partitionKeyColumns())
+        {
+            columnPrimaryKey.remove(cdef.name);
+        }
+        if (columnPrimaryKey.size() == 1)
+        {
+            baseRegularViewPrimaryColumn = columnPrimaryKey.iterator().next();
         }
     }
 
@@ -371,13 +385,22 @@ public class TemporalRow
         if (!innerMap.containsKey(cellPath))
             innerMap.put(cellPath, new TemporalCell.Versions());
 
+        TemporalCell.Versions temporalCell = innerMap.get(cellPath);
+
         // If this column is part of the view's primary keys
         if (viewPrimaryKey.contains(identifier))
         {
             updateLiveness(ttl, timestamp, localDeletionTime);
         }
 
-        innerMap.get(cellPath).setVersion(new TemporalCell(value, timestamp, ttl, localDeletionTime, isNew));
+        temporalCell.setVersion(new TemporalCell(value, timestamp, ttl, localDeletionTime, isNew));
+
+        if (identifier == baseRegularViewPrimaryColumn && temporalCell.numSet == 2) {
+            if (temporalCell.existingCell.timestamp == temporalCell.newCell.timestamp
+                && temporalCell.existingCell.reconcile(temporalCell.newCell) == temporalCell.newCell) {
+                viewTombstoneReplacement = true;
+            }
+        }
     }
 
     /**

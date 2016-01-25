@@ -238,26 +238,33 @@ public interface Row extends Unfiltered, Collection<ColumnData>
      */
     public static class Deletion
     {
-        public static final Deletion LIVE = new Deletion(DeletionTime.LIVE, false);
+        public static final Deletion LIVE = new Deletion(DeletionTime.LIVE, false, false);
 
         private final DeletionTime time;
         private final boolean isShadowable;
+        private final boolean isReplacement;
 
-        public Deletion(DeletionTime time, boolean isShadowable)
+        public Deletion(DeletionTime time, boolean isShadowable, boolean isReplacement)
         {
             assert !time.isLive() || !isShadowable;
             this.time = time;
             this.isShadowable = isShadowable;
+            this.isReplacement = isReplacement;
         }
 
         public static Deletion regular(DeletionTime time)
         {
-            return time.isLive() ? LIVE : new Deletion(time, false);
+            return time.isLive() ? LIVE : new Deletion(time, false, false);
         }
 
         public static Deletion shadowable(DeletionTime time)
         {
-            return new Deletion(time, true);
+            return new Deletion(time, true, false);
+        }
+
+        public static Deletion replacement(DeletionTime time)
+        {
+            return new Deletion(time, true, true);
         }
 
         /**
@@ -302,9 +309,25 @@ public interface Row extends Unfiltered, Collection<ColumnData>
             return time.supersedes(that.time);
         }
 
+        /**
+         * A tombstone is shadowed when both things happen:
+         * <ul>
+         *     <li>The timestamp is further ahead than the time the row was marked for deletion</li>
+         *     <li>The timestamp matches the time the row was marked, but it was *not* marked as a replacement.</li>
+         * </ul>
+         *
+         * The second case deals with an update that is only supposed to apply to previous values, not a value that is
+         * written in the same timestamp.
+         *
+         * @param primaryKeyLivenessInfo
+         * @return
+         */
         public boolean isShadowedBy(LivenessInfo primaryKeyLivenessInfo)
         {
-            return isShadowable && primaryKeyLivenessInfo.timestamp() > time.markedForDeleteAt();
+            return (isShadowable &&
+                    (primaryKeyLivenessInfo.timestamp() > time.markedForDeleteAt()
+                     || (!isReplacement
+                         && primaryKeyLivenessInfo.timestamp() == time.markedForDeleteAt())));
         }
 
         public boolean deletes(LivenessInfo info)
@@ -342,6 +365,11 @@ public interface Row extends Unfiltered, Collection<ColumnData>
         public String toString()
         {
             return String.format("%s%s", time, isShadowable ? "(shadowable)" : "");
+        }
+
+        public boolean isReplacement()
+        {
+            return isReplacement;
         }
     }
 

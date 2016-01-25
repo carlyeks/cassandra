@@ -261,10 +261,10 @@ public abstract class Rows
 
         Row.Deletion rowDeletion = existing.deletion().supersedes(update.deletion()) ? existing.deletion() : update.deletion();
 
-        if (rowDeletion.deletes(mergedInfo))
-            mergedInfo = LivenessInfo.EMPTY;
-        else if (rowDeletion.isShadowedBy(mergedInfo))
+        if (rowDeletion.isShadowedBy(mergedInfo))
             rowDeletion = Row.Deletion.LIVE;
+        else if (rowDeletion.deletes(mergedInfo))
+            mergedInfo = LivenessInfo.EMPTY;
 
         builder.addPrimaryKeyLivenessInfo(mergedInfo);
         builder.addRowDeletion(rowDeletion);

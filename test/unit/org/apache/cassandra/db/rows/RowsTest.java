@@ -239,7 +239,7 @@ public class RowsTest
                                                       BufferCell.live(kcvm, m, secondToTs(now), BB1, CellPath.create(BB1)),
                                                       BufferCell.live(kcvm, m, secondToTs(now), BB2, CellPath.create(BB2)));
         expectedCells.forEach(originalBuilder::addCell);
-        Row.Deletion rowDeletion = new Row.Deletion(new DeletionTime(ts, now), false);
+        Row.Deletion rowDeletion = new Row.Deletion(new DeletionTime(ts, now), false, false);
         originalBuilder.addRowDeletion(rowDeletion);
 
         RowBuilder builder = new RowBuilder();
@@ -267,7 +267,7 @@ public class RowsTest
                                                       BufferCell.live(kcvm, m, ts, BB1, CellPath.create(BB1)),
                                                       BufferCell.live(kcvm, m, ts, BB2, CellPath.create(BB2)));
         expectedCells.forEach(builder::addCell);
-        Row.Deletion rowDeletion = new Row.Deletion(new DeletionTime(ts, now), false);
+        Row.Deletion rowDeletion = new Row.Deletion(new DeletionTime(ts, now), false, false);
         builder.addRowDeletion(rowDeletion);
 
         StatsCollector collector = new StatsCollector();
@@ -321,7 +321,7 @@ public class RowsTest
         List<Cell> r2ExpectedCells = Lists.newArrayList(r2v, r2m2, r2m3, r2m4);
 
         r2ExpectedCells.forEach(r2Builder::addCell);
-        Row.Deletion r2RowDeletion = new Row.Deletion(new DeletionTime(ts1 - 2, now2), false);
+        Row.Deletion r2RowDeletion = new Row.Deletion(new DeletionTime(ts1 - 2, now2), false, false);
         r2Builder.addRowDeletion(r2RowDeletion);
 
         Row r1 = r1Builder.build();
@@ -391,7 +391,7 @@ public class RowsTest
         List<Cell> r2ExpectedCells = Lists.newArrayList(r2v, r2m2, r2m3, r2m4);
 
         r2ExpectedCells.forEach(r2Builder::addCell);
-        Row.Deletion r2RowDeletion = new Row.Deletion(new DeletionTime(ts1 - 1, now2), false);
+        Row.Deletion r2RowDeletion = new Row.Deletion(new DeletionTime(ts1 - 1, now2), false, false);
         r2Builder.addRowDeletion(r2RowDeletion);
 
         Row r1 = r1Builder.build();
@@ -445,7 +445,7 @@ public class RowsTest
         List<Cell> r2ExpectedCells = Lists.newArrayList(r2v, r2m2, r2m3, r2m4);
 
         r2ExpectedCells.forEach(r2Builder::addCell);
-        Row.Deletion r2RowDeletion = new Row.Deletion(new DeletionTime(ts1 - 1, now2), false);
+        Row.Deletion r2RowDeletion = new Row.Deletion(new DeletionTime(ts1 - 1, now2), false, false);
         r2Builder.addRowDeletion(r2RowDeletion);
 
         Row r1 = r1Builder.build();
@@ -509,7 +509,7 @@ public class RowsTest
         int now2 = now1 + 1;
         Row.Builder updateBuilder = createBuilder(c1, now2, null, BB1, BB1);
         int now3 = now2 + 1;
-        Row.Deletion expectedDeletion = new Row.Deletion(new DeletionTime(secondToTs(now3), now3), false);
+        Row.Deletion expectedDeletion = new Row.Deletion(new DeletionTime(secondToTs(now3), now3), false, false);
         updateBuilder.addRowDeletion(expectedDeletion);
 
         RowBuilder builder = new RowBuilder();
@@ -533,7 +533,7 @@ public class RowsTest
         int now2 = now1 + 1;
         Row.Builder updateBuilder = createBuilder(c1, now2, BB1, BB1, BB1);
         int now3 = now2 + 1;
-        Row.Deletion expectedDeletion = new Row.Deletion(new DeletionTime(secondToTs(now3), now3), false);
+        Row.Deletion expectedDeletion = new Row.Deletion(new DeletionTime(secondToTs(now3), now3), false, false);
         updateBuilder.addRowDeletion(expectedDeletion);
 
         RowBuilder builder = new RowBuilder();

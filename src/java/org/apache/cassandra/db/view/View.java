@@ -332,9 +332,16 @@ public class View
             return null;
 
         TemporalRow.Resolver resolver = TemporalRow.earliest;
+        Row.Deletion deletion;
+        if (temporalRow.viewTombstoneReplacement) {
+            deletion = Row.Deletion.replacement(new DeletionTime(temporalRow.viewClusteringTimestamp(), temporalRow.nowInSec));
+        }
+        else {
+            deletion = Row.Deletion.shadowable(new DeletionTime(temporalRow.viewClusteringTimestamp(), temporalRow.nowInSec));
+        }
         return createTombstone(temporalRow,
                                viewPartitionKey(temporalRow, resolver),
-                               Row.Deletion.shadowable(new DeletionTime(temporalRow.viewClusteringTimestamp(), temporalRow.nowInSec)),
+                               deletion,
                                resolver,
                                temporalRow.nowInSec);
     }

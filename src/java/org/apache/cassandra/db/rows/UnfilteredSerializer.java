@@ -88,6 +88,7 @@ public class UnfilteredSerializer
      */
     private final static int IS_STATIC               = 0x01; // Whether the encoded row is a static. If there is no extended flag, the row is assumed not static.
     private final static int HAS_SHADOWABLE_DELETION = 0x02; // Whether the row deletion is shadowable. If there is no extended flag (or no row deletion), the deletion is assumed not shadowable.
+    private final static int HAS_REPLACEMENT_DELETION = 0x04; // Whether the row deletion is a replacement. If there is no extended flag (or no row deletion), the deletion is assumed not to be a replacement.
 
     public void serialize(Unfiltered unfiltered, SerializationHeader header, DataOutputPlus out, int version)
     throws IOException
@@ -142,6 +143,8 @@ public class UnfilteredSerializer
             flags |= HAS_DELETION;
             if (deletion.isShadowable())
                 extendedFlags |= HAS_SHADOWABLE_DELETION;
+            if (deletion.isReplacement())
+                extendedFlags |= HAS_REPLACEMENT_DELETION;
         }
         if (hasComplexDeletion)
             flags |= HAS_COMPLEX_DELETION;
@@ -402,6 +405,7 @@ public class UnfilteredSerializer
             boolean hasTTL = (flags & HAS_TTL) != 0;
             boolean hasDeletion = (flags & HAS_DELETION) != 0;
             boolean deletionIsShadowable = (extendedFlags & HAS_SHADOWABLE_DELETION) != 0;
+            boolean deletionIsReplacement = (extendedFlags & HAS_REPLACEMENT_DELETION) != 0;
             boolean hasComplexDeletion = (flags & HAS_COMPLEX_DELETION) != 0;
             boolean hasAllColumns = (flags & HAS_ALL_COLUMNS) != 0;
             Columns headerColumns = header.columns(isStatic);
@@ -422,7 +426,7 @@ public class UnfilteredSerializer
             }
 
             builder.addPrimaryKeyLivenessInfo(rowLiveness);
-            builder.addRowDeletion(hasDeletion ? new Row.Deletion(header.readDeletionTime(in), deletionIsShadowable) : Row.Deletion.LIVE);
+            builder.addRowDeletion(hasDeletion ? new Row.Deletion(header.readDeletionTime(in), deletionIsShadowable, deletionIsReplacement) : Row.Deletion.LIVE);
 
             Columns columns = hasAllColumns ? headerColumns : Columns.serializer.deserializeSubset(headerColumns, in);
             for (ColumnDefinition column : columns)
