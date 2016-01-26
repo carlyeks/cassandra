@@ -1080,7 +1080,7 @@ public class StorageProxy implements StorageProxyMBean
             viewWriteMetrics.viewWriteLatency.update(delay, TimeUnit.MILLISECONDS);
         }, writeType);
         BatchlogResponseHandler<IMutation> batchHandler = new ViewWriteMetricsWrapped(writeHandler, batchConsistencyLevel.blockFor(keyspace), cleanup);
-        return new WriteResponseHandlerWrapper(batchHandler, mutation);
+        return new WriteResponseHandlerWrapper(batchHandler, mutation.withVerb(Verb.VIEW_MUTATION));
     }
 
     // used by atomic_batch_mutate to decouple availability check from the write itself, caches consistency level and endpoints.

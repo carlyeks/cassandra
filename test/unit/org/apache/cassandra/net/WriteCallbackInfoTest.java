@@ -42,7 +42,7 @@ public class WriteCallbackInfoTest
     public void testShouldHint() throws Exception
     {
         testShouldHint(Verb.COUNTER_MUTATION, ConsistencyLevel.ALL, true, false);
-        for (Verb verb : new Verb[] { Verb.PAXOS_COMMIT, Verb.MUTATION })
+        for (Verb verb : new Verb[] { Verb.PAXOS_COMMIT, Verb.MUTATION, Verb.VIEW_MUTATION })
         {
             testShouldHint(verb, ConsistencyLevel.ALL, true, true);
             testShouldHint(verb, ConsistencyLevel.ANY, true, false);

@@ -55,6 +55,8 @@ public class Mutation implements IMutation
     // map of column family id to mutations for that column family.
     private final Map<UUID, PartitionUpdate> modifications;
 
+    private final MessagingService.Verb verb;
+
     // Time at which this mutation was instantiated
     public final long createdAt = System.currentTimeMillis();
     // keep track of when mutation has started waiting for a MV partition lock
@@ -72,9 +74,15 @@ public class Mutation implements IMutation
 
     protected Mutation(String keyspaceName, DecoratedKey key, Map<UUID, PartitionUpdate> modifications)
     {
+        this(keyspaceName, key, modifications, MessagingService.Verb.MUTATION);
+    }
+
+    protected Mutation(String keyspaceName, DecoratedKey key, Map<UUID, PartitionUpdate> modifications, MessagingService.Verb verb)
+    {
         this.keyspaceName = keyspaceName;
         this.key = key;
         this.modifications = modifications;
+        this.verb = verb;
     }
 
     public Mutation copy()
@@ -217,7 +225,7 @@ public class Mutation implements IMutation
 
     public MessageOut<Mutation> createMessage()
     {
-        return createMessage(MessagingService.Verb.MUTATION);
+        return createMessage(this.verb);
     }
 
     public MessageOut<Mutation> createMessage(MessagingService.Verb verb)
@@ -264,6 +272,11 @@ public class Mutation implements IMutation
             buff.append("\n  ").append(StringUtils.join(modifications.values(), "\n  ")).append("\n");
         }
         return buff.append("])").toString();
+    }
+
+    public Mutation withVerb(MessagingService.Verb verb)
+    {
+        return new Mutation(keyspaceName, key, modifications, verb);
     }
 
     public static class MutationSerializer implements IVersionedSerializer<Mutation>
