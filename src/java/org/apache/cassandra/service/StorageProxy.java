@@ -810,12 +810,15 @@ public class StorageProxy implements StorageProxyMBean
         boolean updatesView = Keyspace.open(mutations.iterator().next().getKeyspaceName())
                               .viewManager
                               .updatesAffectView(mutations, true);
+        boolean reallyUpdatesView = Keyspace.open(mutations.iterator().next().getKeyspaceName())
+                              .viewManager
+                              .updatesAffectView(mutations, false);
 
-        Stage stage = updatesView ? Stage.VIEW_MUTATION : Stage.MUTATION;
+        Stage stage = reallyUpdatesView ? Stage.VIEW_MUTATION : Stage.MUTATION;
         if (augmented != null)
         {
             Collection<Mutation> useMutations = augmented;
-            if (updatesView) {
+            if (reallyUpdatesView) {
                 List<Mutation> ms = new ArrayList<>();
                 for (Mutation m : augmented) {
                     ms.add(m.withVerb(Verb.VIEW_MUTATION));
@@ -828,17 +831,27 @@ public class StorageProxy implements StorageProxyMBean
         {
             if (mutateAtomically || updatesView){
                 Collection<? extends IMutation> useMutations = mutations;
-                if (updatesView) {
+                if (reallyUpdatesView) {
                     List<Mutation> ms = new ArrayList<>();
-                    for (Mutation m : augmented) {
-                        ms.add(m.withVerb(Verb.VIEW_MUTATION));
+                    for (IMutation m : mutations) {
+                        ms.add(((Mutation)m).withVerb(Verb.VIEW_MUTATION));
                     }
                     useMutations = ms;
                 }
                 mutateAtomically((Collection<Mutation>)useMutations, consistencyLevel, stage, updatesView);
             }
             else
-                mutate(mutations, consistencyLevel);
+            {
+                Collection<? extends IMutation> useMutations = mutations;
+                if (reallyUpdatesView) {
+                    List<Mutation> ms = new ArrayList<>();
+                    for (IMutation m : mutations) {
+                        ms.add(((Mutation)m).withVerb(Verb.VIEW_MUTATION));
+                    }
+                    useMutations = ms;
+                }
+                mutate(useMutations, consistencyLevel);
+            }
         }
     }
 
