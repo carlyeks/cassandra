@@ -25,6 +25,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
@@ -810,12 +811,32 @@ public class StorageProxy implements StorageProxyMBean
                               .viewManager
                               .updatesAffectView(mutations, true);
 
+        Stage stage = updatesView ? Stage.VIEW_MUTATION : Stage.MUTATION;
         if (augmented != null)
-            mutateAtomically(augmented, consistencyLevel, updatesView);
+        {
+            Collection<Mutation> useMutations = augmented;
+            if (updatesView) {
+                List<Mutation> ms = new ArrayList<>();
+                for (Mutation m : augmented) {
+                    ms.add(m.withVerb(Verb.VIEW_MUTATION));
+                }
+                useMutations = ms;
+            }
+            mutateAtomically(useMutations, consistencyLevel, stage, updatesView);
+        }
         else
         {
-            if (mutateAtomically || updatesView)
-                mutateAtomically((Collection<Mutation>) mutations, consistencyLevel, updatesView);
+            if (mutateAtomically || updatesView){
+                Collection<? extends IMutation> useMutations = mutations;
+                if (updatesView) {
+                    List<Mutation> ms = new ArrayList<>();
+                    for (Mutation m : augmented) {
+                        ms.add(m.withVerb(Verb.VIEW_MUTATION));
+                    }
+                    useMutations = ms;
+                }
+                mutateAtomically((Collection<Mutation>)useMutations, consistencyLevel, stage, updatesView);
+            }
             else
                 mutate(mutations, consistencyLevel);
         }
@@ -833,6 +854,7 @@ public class StorageProxy implements StorageProxyMBean
      */
     public static void mutateAtomically(Collection<Mutation> mutations,
                                         ConsistencyLevel consistency_level,
+                                        Stage stage,
                                         boolean requireQuorumForRemove)
     throws UnavailableException, OverloadedException, WriteTimeoutException
     {
@@ -880,7 +902,7 @@ public class StorageProxy implements StorageProxyMBean
             syncWriteToBatchlog(mutations, batchlogEndpoints, batchUUID);
 
             // now actually perform the writes and wait for them to complete
-            syncWriteBatchedMutations(wrappers, localDataCenter, Stage.MUTATION);
+            syncWriteBatchedMutations(wrappers, localDataCenter, stage);
         }
         catch (UnavailableException e)
         {
