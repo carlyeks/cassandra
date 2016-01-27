@@ -20,6 +20,7 @@ package org.apache.cassandra.db;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.lang3.StringUtils;
@@ -199,10 +200,10 @@ public class Mutation implements IMutation
      * This is equivalent to calling commit. Applies the changes to
      * to the keyspace that is obtained by calling Keyspace.open().
      */
-    public void apply()
+    public CompletableFuture<?> apply()
     {
         Keyspace ks = Keyspace.open(keyspaceName);
-        ks.apply(this, ks.getMetadata().params.durableWrites);
+        return ks.apply(this, ks.getMetadata().params.durableWrites);
     }
 
     public void apply(boolean durableWrites)
