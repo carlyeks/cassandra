@@ -727,8 +727,9 @@ public class StorageProxy implements StorageProxyMBean
                 BatchlogResponseHandler.BatchlogCleanup cleanup = new BatchlogResponseHandler.BatchlogCleanup(mutations.size(),
                                                                                                               () -> asyncRemoveFromBatchlog(batchlogEndpoints, batchUUID));
                 // add a handler for each mutation - includes checking availability, but doesn't initiate any writes, yet
-                for (Mutation mutation : mutations)
+                for (Mutation m : mutations)
                 {
+                    Mutation mutation = m.withVerb(Verb.VIEW_MUTATION);
                     String keyspaceName = mutation.getKeyspaceName();
                     Token tk = mutation.key().getToken();
                     Optional<InetAddress> pairedEndpoint = ViewUtils.getViewNaturalEndpoint(keyspaceName, baseToken, tk);
@@ -1080,7 +1081,7 @@ public class StorageProxy implements StorageProxyMBean
             viewWriteMetrics.viewWriteLatency.update(delay, TimeUnit.MILLISECONDS);
         }, writeType);
         BatchlogResponseHandler<IMutation> batchHandler = new ViewWriteMetricsWrapped(writeHandler, batchConsistencyLevel.blockFor(keyspace), cleanup);
-        return new WriteResponseHandlerWrapper(batchHandler, mutation.withVerb(Verb.VIEW_MUTATION));
+        return new WriteResponseHandlerWrapper(batchHandler, mutation);
     }
 
     // used by atomic_batch_mutate to decouple availability check from the write itself, caches consistency level and endpoints.

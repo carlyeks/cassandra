@@ -656,7 +656,8 @@ public final class MessagingService implements MessagingServiceMBean
     {
         assert message.verb == Verb.MUTATION
             || message.verb == Verb.COUNTER_MUTATION
-            || message.verb == Verb.PAXOS_COMMIT;
+            || message.verb == Verb.PAXOS_COMMIT
+            || message.verb == Verb.VIEW_MUTATION;
         int messageId = nextId();
 
         CallbackInfo previous = callbacks.put(messageId,
