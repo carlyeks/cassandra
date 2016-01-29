@@ -66,7 +66,7 @@ public class MutationVerbHandler implements IVerbHandler<Mutation>
                 reply(id, replyTo);
             }
             else
-                message.payload.apply().thenAccept(o -> reply(id, replyTo)).exceptionally(wto -> {
+                message.payload.applyFuture().thenAccept(o -> reply(id, replyTo)).exceptionally(wto -> {
                     failed();
                     return null;
                 });

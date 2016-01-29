@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.lang3.StringUtils;
@@ -196,14 +197,30 @@ public class Mutation implements IMutation
         return new Mutation(ks, key, modifications);
     }
 
+    public CompletableFuture<?> applyFuture()
+    {
+        Keyspace ks = Keyspace.open(keyspaceName);
+        return ks.apply(this, ks.getMetadata().params.durableWrites);
+    }
+
     /*
      * This is equivalent to calling commit. Applies the changes to
      * to the keyspace that is obtained by calling Keyspace.open().
      */
-    public CompletableFuture<?> apply()
+    public void apply()
     {
-        Keyspace ks = Keyspace.open(keyspaceName);
-        return ks.apply(this, ks.getMetadata().params.durableWrites);
+        try
+        {
+            applyFuture().get();
+        }
+        catch (InterruptedException e)
+        {
+            throw new RuntimeException(e);
+        }
+        catch (ExecutionException e)
+        {
+            throw new RuntimeException(e.getCause());
+        }
     }
 
     public void apply(boolean durableWrites)
