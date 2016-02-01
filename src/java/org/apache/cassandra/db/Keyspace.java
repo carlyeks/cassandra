@@ -389,9 +389,9 @@ public class Keyspace
         return apply(mutation, writeCommitLog, updateIndexes, false, null);
     }
 
-    public void applyFromCommitLog(Mutation mutation)
+    public CompletableFuture<?> applyFromCommitLog(Mutation mutation)
     {
-        apply(mutation, false, true, true, null);
+        return apply(mutation, false, true, true, null);
     }
 
     /**

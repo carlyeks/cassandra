@@ -21,15 +21,22 @@
 package org.apache.cassandra.service.paxos;
 
 import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.locks.Lock;
 
 import com.google.common.util.concurrent.Striped;
+import com.google.common.util.concurrent.Uninterruptibles;
 
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.UUIDGen;
+import org.apache.mina.core.IoUtil;
+import org.apache.mina.core.RuntimeIoException;
+import sun.nio.ch.IOUtil;
 
 public class PaxosState
 {
@@ -138,7 +145,14 @@ public class PaxosState
             {
                 Tracing.trace("Committing proposal {}", proposal);
                 Mutation mutation = proposal.makeMutation();
-                Keyspace.open(mutation.getKeyspaceName()).apply(mutation, true);
+                try
+                {
+                    Uninterruptibles.getUninterruptibly(Keyspace.open(mutation.getKeyspaceName()).apply(mutation, true));
+                }
+                catch (ExecutionException e)
+                {
+                    throw new RuntimeException(e.getCause());
+                }
             }
             else
             {

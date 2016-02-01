@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -211,11 +212,7 @@ public class Mutation implements IMutation
     {
         try
         {
-            applyFuture().get();
-        }
-        catch (InterruptedException e)
-        {
-            throw new RuntimeException(e);
+            Uninterruptibles.getUninterruptibly(applyFuture());
         }
         catch (ExecutionException e)
         {
