@@ -34,6 +34,9 @@ public class ValidationMetadata extends MetadataComponent
 {
     public static final IMetadataComponentSerializer serializer = new ValidationMetadataSerializer();
 
+    //a bloomFilterFPChance of -1.0 on the validation metadata means the bloom filter was skipped
+    public static final double NO_BLOOM_FILTER_MARKER = -1.0;
+
     public final String partitioner;
     public final double bloomFilterFPChance;
 
@@ -67,6 +70,11 @@ public class ValidationMetadata extends MetadataComponent
         temp = Double.doubleToLongBits(bloomFilterFPChance);
         result = 31 * result + (int) (temp ^ (temp >>> 32));
         return result;
+    }
+
+    public MetadataComponent mutateBloomFilterFPChance(double newBfFpChance)
+    {
+        return new ValidationMetadata(partitioner, newBfFpChance);
     }
 
     public static class ValidationMetadataSerializer implements IMetadataComponentSerializer<ValidationMetadata>

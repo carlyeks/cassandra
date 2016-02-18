@@ -82,7 +82,8 @@ import org.apache.cassandra.utils.concurrent.Transactional;
  *
  * See CASSANDRA-7066 for full details.
  */
-class LogTransaction extends Transactional.AbstractTransactional implements Transactional
+@VisibleForTesting
+public class LogTransaction extends Transactional.AbstractTransactional implements Transactional
 {
     private static final Logger logger = LoggerFactory.getLogger(LogTransaction.class);
 
@@ -310,6 +311,9 @@ class LogTransaction extends Transactional.AbstractTransactional implements Tran
                 // If we can't successfully delete the DATA component, set the task to be retried later: see TransactionTidier
                 File datafile = new File(desc.filenameFor(Component.DATA));
 
+                if (logger.isTraceEnabled())
+                    logger.info("Deleting {}", datafile);
+
                 delete(datafile);
                 // let the remainder be cleaned up by delete
                 SSTable.delete(desc, SSTable.discoverComponentsFor(desc));
@@ -345,7 +349,8 @@ class LogTransaction extends Transactional.AbstractTransactional implements Tran
         SnapshotDeletingTask.rescheduleFailedTasks();
     }
 
-    static void waitForDeletions()
+    @VisibleForTesting
+    public static void waitForDeletions()
     {
         FBUtilities.waitOnFuture(ScheduledExecutors.nonPeriodicTasks.schedule(Runnables.doNothing(), 0, TimeUnit.MILLISECONDS));
     }

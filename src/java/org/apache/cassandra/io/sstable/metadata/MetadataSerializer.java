@@ -147,6 +147,16 @@ public class MetadataSerializer implements IMetadataSerializer
         rewriteSSTableMetadata(descriptor, currentComponents);
     }
 
+    public void clearBloomFilter(Descriptor descriptor) throws IOException
+    {
+        logger.trace("Mutating {} bloomFilterFPChance to {}", descriptor.filenameFor(Component.STATS), ValidationMetadata.NO_BLOOM_FILTER_MARKER);
+        Map<MetadataType, MetadataComponent> currentComponents = deserialize(descriptor, EnumSet.allOf(MetadataType.class));
+        ValidationMetadata validation = (ValidationMetadata) currentComponents.remove(MetadataType.VALIDATION);
+        currentComponents.put(MetadataType.VALIDATION, validation.mutateBloomFilterFPChance(ValidationMetadata.NO_BLOOM_FILTER_MARKER));
+        rewriteSSTableMetadata(descriptor, currentComponents);
+        FileUtils.delete(descriptor.filenameFor(Component.FILTER));
+    }
+
     private void rewriteSSTableMetadata(Descriptor descriptor, Map<MetadataType, MetadataComponent> currentComponents) throws IOException
     {
         String filePath = descriptor.tmpFilenameFor(Component.STATS);

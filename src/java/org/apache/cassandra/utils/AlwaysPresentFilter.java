@@ -53,4 +53,9 @@ public class AlwaysPresentFilter implements IFilter
     {
         return 0;
     }
+
+    public boolean isAlwaysPresent()
+    {
+        return true;
+    }
 }

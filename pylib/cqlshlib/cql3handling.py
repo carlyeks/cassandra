@@ -503,6 +503,7 @@ def cf_prop_val_mapkey_completer(ctxt, cass):
             opts.add('bucket_low')
         elif csc == 'LeveledCompactionStrategy':
             opts.add('sstable_size_in_mb')
+            opts.add('skip_top_level_bloom_filter')
         elif csc == 'DateTieredCompactionStrategy':
             opts.add('base_time_seconds')
             opts.add('max_sstable_age_days')

@@ -21,6 +21,7 @@ package org.apache.cassandra.db.compaction;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import com.google.common.collect.Iterables;
 import org.apache.cassandra.index.Index;
@@ -394,6 +395,8 @@ public class CompactionStrategyManager implements INotificationConsumer
             SSTableReader sstable = ((SSTableDeletingNotification) notification).deleting;
             getCompactionStrategyFor(sstable).removeSSTable(sstable);
         }
+
+        Stream.concat(repaired.stream(), unrepaired.stream()).forEach(s -> s.afterSStableUpdate());
     }
 
     public void enable()

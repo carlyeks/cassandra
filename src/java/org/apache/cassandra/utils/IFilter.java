@@ -44,4 +44,6 @@ public interface IFilter extends SharedCloseable
      * @return the amount of memory in bytes used off heap
      */
     long offHeapSize();
+
+    boolean isAlwaysPresent();
 }

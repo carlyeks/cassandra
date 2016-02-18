@@ -25,6 +25,8 @@
  * Stripe view locks by key and table ID to reduce contention (CASSANDRA-10981)
  * Add nodetool gettimeout and settimeout commands (CASSANDRA-10953)
  * Add 3.0 metadata to sstablemetadata output (CASSANDRA-10838)
+ * Add option to skip top level bloom filter on LCS (CASSANDRA-9830)
+
 Merged from 3.0:
  * Disallow drop/alter operations of UDTs used by UDAs (CASSANDRA-10721)
  * Add query time validation method on Index (CASSANDRA-11043)

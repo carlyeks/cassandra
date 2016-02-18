@@ -317,6 +317,11 @@ public abstract class AbstractCompactionStrategy
 
     public abstract void removeSSTable(SSTableReader sstable);
 
+    public void afterSStableUpdate()
+    {
+        //no-op, may be overriden by subclasses
+    }
+
     public static class ScannerList implements AutoCloseable
     {
         public final List<ISSTableScanner> scanners;

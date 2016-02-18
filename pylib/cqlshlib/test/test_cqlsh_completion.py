@@ -640,6 +640,12 @@ class TestCqlshCompletion(CqlshCompletionCase):
                                      'unchecked_tombstone_compaction',
                                      'only_purge_repaired_tombstones'])
         self.trycompletions(prefix + " new_table (col_a int PRIMARY KEY) WITH compaction = "
+                            + "{'class': 'LeveledCompactionStrategy', '",
+                            choices=['class', 'enabled', 'max_threshold',
+                                     'only_purge_repaired_tombstones', 'skip_top_level_bloom_filter',
+                                     'sstable_size_in_mb', 'tombstone_compaction_interval',
+                                     'tombstone_threshold', 'unchecked_tombstone_compaction',])
+        self.trycompletions(prefix + " new_table (col_a int PRIMARY KEY) WITH compaction = "
                             + "{'class': 'SizeTieredCompactionStrategy'}",
                             choices=[';', 'AND'])
         self.trycompletions(prefix + " new_table (col_a int PRIMARY KEY) WITH compaction = "

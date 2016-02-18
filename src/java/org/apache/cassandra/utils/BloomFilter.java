@@ -158,4 +158,9 @@ public class BloomFilter extends WrappedSharedCloseable implements IFilter
         super.addTo(identities);
         bitset.addTo(identities);
     }
+
+    public boolean isAlwaysPresent()
+    {
+        return false;
+    }
 }

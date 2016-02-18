@@ -37,12 +37,19 @@ import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.sstable.ISSTableScanner;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
-import org.apache.cassandra.utils.FBUtilities;
 
 public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 {
     private static final Logger logger = LoggerFactory.getLogger(LeveledCompactionStrategy.class);
+
     private static final String SSTABLE_SIZE_OPTION = "sstable_size_in_mb";
+    protected static final String SKIP_TOP_LEVEL_BLOOM_FILTER_OPTION = "skip_top_level_bloom_filter";
+    private static final String DEFAULT_SKIP_TOP_LEVEL_BLOOM_FILTER = "false";
+
+    /* Users may opt to skip loading bloom filter on top level sstables to reduce memory usage, when there are
+       few key misses during reads. On lower levels, bloom filters are still relevant, as they might allow to skip
+       a lower level when a key is not present. (CASSANDRA-9830) */
+    private final boolean skipTopLevelBloomFilter;
 
     @VisibleForTesting
     final LeveledManifest manifest;
@@ -70,6 +77,10 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             }
         }
         maxSSTableSizeInMB = configuredMaxSSTableSize;
+       ;
+
+        this.skipTopLevelBloomFilter = Boolean.parseBoolean(options.getOrDefault(SKIP_TOP_LEVEL_BLOOM_FILTER_OPTION,
+                                                                            DEFAULT_SKIP_TOP_LEVEL_BLOOM_FILTER));
 
         manifest = new LeveledManifest(cfs, this.maxSSTableSizeInMB, localOptions);
         logger.trace("Created {}", manifest);
@@ -118,7 +129,8 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             LifecycleTransaction txn = cfs.getTracker().tryModify(candidate.sstables, OperationType.COMPACTION);
             if (txn != null)
             {
-                LeveledCompactionTask newTask = new LeveledCompactionTask(cfs, txn, candidate.level, gcBefore, candidate.maxSSTableBytes, false);
+                LeveledCompactionTask newTask = new LeveledCompactionTask(cfs, txn, candidate.level, gcBefore,
+                                                                          candidate.maxSSTableBytes, false);
                 newTask.setCompactionType(op);
                 return newTask;
             }
@@ -137,7 +149,6 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         if (txn == null)
             return null;
         return Arrays.<AbstractCompactionTask>asList(new LeveledCompactionTask(cfs, txn, 0, gcBefore, getMaxSSTableBytes(), true));
-
     }
 
     @Override
@@ -276,6 +287,14 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
     public void addSSTable(SSTableReader added)
     {
         manifest.add(added);
+    }
+
+    public void afterSStableUpdate()
+    {
+        if (this.skipTopLevelBloomFilter)
+        {
+            manifest.clearTopLevelBloomFilters();
+        }
     }
 
     @Override
@@ -442,7 +461,17 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             throw new ConfigurationException(String.format("%s is not a parsable int (base10) for %s", size, SSTABLE_SIZE_OPTION), ex);
         }
 
+        String disableTopLevelBloomFilter = options.get(SKIP_TOP_LEVEL_BLOOM_FILTER_OPTION);
+        if (disableTopLevelBloomFilter != null)
+        {
+            if (!disableTopLevelBloomFilter.equalsIgnoreCase("true") && !disableTopLevelBloomFilter.equalsIgnoreCase("false"))
+                throw new ConfigurationException(String.format("'%s' should be either 'true' or 'false', not '%s'",
+                                                               SKIP_TOP_LEVEL_BLOOM_FILTER_OPTION,
+                                                               disableTopLevelBloomFilter));
+        }
+
         uncheckedOptions.remove(SSTABLE_SIZE_OPTION);
+        uncheckedOptions.remove(SKIP_TOP_LEVEL_BLOOM_FILTER_OPTION);
 
         uncheckedOptions = SizeTieredCompactionStrategyOptions.validateOptions(options, uncheckedOptions);
 

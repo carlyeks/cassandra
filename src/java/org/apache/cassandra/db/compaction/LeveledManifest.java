@@ -140,8 +140,6 @@ public class LeveledManifest
         }
     }
 
-
-
     public synchronized void replace(Collection<SSTableReader> removed, Collection<SSTableReader> added)
     {
         assert !removed.isEmpty(); // use add() instead of promote when adding new sstables
@@ -169,6 +167,28 @@ public class LeveledManifest
         for (SSTableReader ssTableReader : added)
             add(ssTableReader);
         lastCompactedKeys[minLevel] = SSTableReader.sstableOrdering.max(added).last;
+    }
+
+    public void clearTopLevelBloomFilters()
+    {
+        if (getLevelCount() > 0) //L0 is not considered a top-level (since it may contain overlapping sstables)
+        {
+            for (SSTableReader reader : generations[getLevelCount()])
+            {
+                if (!reader.getBloomFilter().isAlwaysPresent())
+                {
+                    reader.releaseBloomFilter();
+                    try
+                    {
+                        reader.descriptor.getMetadataSerializer().clearBloomFilter(reader.descriptor);
+                    }
+                    catch (IOException e)
+                    {
+                        throw new RuntimeException("Could not clear bloom filter.", e);
+                    }
+                }
+            }
+        }
     }
 
     public synchronized void repairOverlappingSSTables(int level)
@@ -523,7 +543,8 @@ public class LeveledManifest
     /**
      * @return sstables from @param sstables that contain keys between @param start and @param end, inclusive.
      */
-    private static Set<SSTableReader> overlapping(Token start, Token end, Iterable<SSTableReader> sstables)
+    @VisibleForTesting
+    public static Set<SSTableReader> overlapping(Token start, Token end, Iterable<SSTableReader> sstables)
     {
         assert start.compareTo(end) <= 0;
         Set<SSTableReader> overlapped = new HashSet<>();

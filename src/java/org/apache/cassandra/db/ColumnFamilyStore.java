@@ -1969,6 +1969,19 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     }
 
     /**
+     * This method must be only used for testing and must be preceded by the clearUnsafe() method.
+     */
+    @VisibleForTesting
+    public synchronized void reloadSSTablesUnsafe()
+    {
+        logger.info("Reloading SSTables for {}/{}...", keyspace.getName(), name);
+        Directories.SSTableLister sstableFiles = directories.sstableLister(Directories.OnTxnErr.IGNORE).skipTemporary(true);
+        Collection<SSTableReader> sstables = SSTableReader.openAll(sstableFiles.list().entrySet(), metadata);
+        data.addInitialSSTables(sstables);
+        logger.info("Done reloading SSTables for {}/{}", keyspace.getName(), name);
+    }
+
+    /**
      * Truncate deletes the entire column family's data with no expensive tombstone creation
      */
     public void truncateBlocking()

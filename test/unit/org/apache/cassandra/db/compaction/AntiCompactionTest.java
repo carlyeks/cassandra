@@ -341,7 +341,7 @@ public class AntiCompactionTest
         store.truncateBlocking();
     }
 
-    private static Set<SSTableReader> getUnrepairedSSTables(ColumnFamilyStore cfs)
+    public static Set<SSTableReader> getUnrepairedSSTables(ColumnFamilyStore cfs)
     {
         return ImmutableSet.copyOf(cfs.getTracker().getView().sstables(SSTableSet.LIVE, (s) -> !s.isRepaired()));
     }

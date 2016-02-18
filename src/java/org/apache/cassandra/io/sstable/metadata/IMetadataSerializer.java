@@ -73,4 +73,11 @@ public interface IMetadataSerializer
      * Mutate repairedAt time
      */
     void mutateRepairedAt(Descriptor descriptor, long newRepairedAt) throws IOException;
+
+    /**
+     * Removes bloom filter component and sets ValidationMetadata bloom filter fp chance to -1 (NO_BLOOM_FILTER)
+     * @param descriptor
+     * @throws IOException
+     */
+    void clearBloomFilter(Descriptor descriptor) throws IOException;
 }

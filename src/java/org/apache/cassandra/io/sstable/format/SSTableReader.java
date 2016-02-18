@@ -464,7 +464,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
         ValidationMetadata validationMetadata = (ValidationMetadata) sstableMetadata.get(MetadataType.VALIDATION);
         StatsMetadata statsMetadata = (StatsMetadata) sstableMetadata.get(MetadataType.STATS);
         SerializationHeader.Component header = (SerializationHeader.Component) sstableMetadata.get(MetadataType.HEADER);
-        assert !descriptor.version.storeRows() || header != null;
+        assert !descriptor.version.storeRows() || header != null : "Header component is missing for sstable " + descriptor;
 
         // Check if sstable is created using same partitioner.
         // Partitioner can be null, which indicates older version of sstable or no stats available.
@@ -679,7 +679,8 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
 
     private void load(ValidationMetadata validation) throws IOException
     {
-        if (metadata.params.bloomFilterFpChance == 1.0)
+        if (metadata.params.bloomFilterFpChance == 1.0 ||
+                        validation.bloomFilterFPChance == ValidationMetadata.NO_BLOOM_FILTER_MARKER)
         {
             // bf is disabled.
             load(false, true);
@@ -1252,6 +1253,12 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     {
         tidy.releaseSummary();
         indexSummary = null;
+    }
+
+    public void releaseBloomFilter()
+    {
+        this.bf = new AlwaysPresentFilter();
+        tidy.releaseBloomFilter();
     }
 
     private void validate()
@@ -2222,6 +2229,13 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
             summary.close();
             assert summary.isCleanedUp();
             summary = null;
+        }
+
+        void releaseBloomFilter()
+        {
+            if (bf != null)
+                bf.close();
+            bf = null;
         }
     }
 
