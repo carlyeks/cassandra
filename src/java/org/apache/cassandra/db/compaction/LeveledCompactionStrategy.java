@@ -44,7 +44,7 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
     private static final String SSTABLE_SIZE_OPTION = "sstable_size_in_mb";
     protected static final String SKIP_TOP_LEVEL_BLOOM_FILTER_OPTION = "skip_top_level_bloom_filter";
-    private static final String DEFAULT_SKIP_TOP_LEVEL_BLOOM_FILTER = "false";
+    private static final String DEFAULT_SKIP_TOP_LEVEL_BLOOM_FILTER = "true";
 
     /* Users may opt to skip loading bloom filter on top level sstables to reduce memory usage, when there are
        few key misses during reads. On lower levels, bloom filters are still relevant, as they might allow to skip
