@@ -4378,6 +4378,23 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return Collections.unmodifiableList(keyspaceNamesList);
     }
 
+    public Map<String, String> getViewBuildStatuses(String keyspace, String view)
+    {
+        Map<UUID, String> coreViewStatus = SystemDistributedKeyspace.viewStatus(keyspace, view);
+        Map<String, String> hostIdToEndpoint = getHostIdToEndpoint();
+        Map<String, String> result = new HashMap<>();
+
+        for (UUID hostId : tokenMetadata.getEndpointToHostIdMapForReading().values())
+        {
+            String endpoint = hostIdToEndpoint.get(hostId.toString());
+            result.put(endpoint, coreViewStatus.containsKey(hostId)
+                                 ? coreViewStatus.get(hostId)
+                                 : "UNKNOWN");
+        }
+
+        return Collections.unmodifiableMap(result);
+    }
+
     public void updateSnitch(String epSnitchClassName, Boolean dynamic, Integer dynamicUpdateInterval, Integer dynamicResetInterval, Double dynamicBadnessThreshold) throws ClassNotFoundException
     {
         IEndpointSnitch oldSnitch = DatabaseDescriptor.getEndpointSnitch();

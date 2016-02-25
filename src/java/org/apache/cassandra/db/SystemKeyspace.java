@@ -262,6 +262,7 @@ public final class SystemKeyspace
                 "CREATE TABLE %s ("
                 + "keyspace_name text,"
                 + "view_name text,"
+                + "status_replicated boolean,"
                 + "PRIMARY KEY ((keyspace_name), view_name))");
 
     @Deprecated
@@ -536,13 +537,23 @@ public final class SystemKeyspace
         return !result.isEmpty();
     }
 
-    public static void setViewBuilt(String keyspaceName, String viewName)
+    public static boolean isViewStatusReplicated(String keyspaceName, String viewName)
     {
-        String req = "INSERT INTO %s.\"%s\" (keyspace_name, view_name) VALUES (?, ?)";
-        executeInternal(String.format(req, NAME, BUILT_VIEWS), keyspaceName, viewName);
-        forceBlockingFlush(BUILT_VIEWS);
+        String req = "SELECT status_replicated FROM %s.\"%s\" WHERE keyspace_name=? AND view_name=?";
+        UntypedResultSet result = executeInternal(String.format(req, NAME, BUILT_VIEWS), keyspaceName, viewName);
+
+        if (result.isEmpty())
+            return false;
+        UntypedResultSet.Row row = result.one();
+        return row.has("status_replicated") && row.getBoolean("status_replicated");
     }
 
+    public static void setViewBuilt(String keyspaceName, String viewName, boolean replicated)
+    {
+        String req = "INSERT INTO %s.\"%s\" (keyspace_name, view_name, status_replicated) VALUES (?, ?, ?)";
+        executeInternal(String.format(req, NAME, BUILT_VIEWS), keyspaceName, viewName, replicated);
+        forceBlockingFlush(BUILT_VIEWS);
+    }
 
     public static void setViewRemoved(String keyspaceName, String viewName)
     {
@@ -570,10 +581,16 @@ public final class SystemKeyspace
         // If we flush the delete first, we'll have to restart from the beginning.
         // Also, if the build succeeded, but the view build failed, we will be able to skip the view build check
         // next boot.
-        setViewBuilt(ksname, viewName);
+        setViewBuilt(ksname, viewName, false);
         forceBlockingFlush(BUILT_VIEWS);
         executeInternal(String.format("DELETE FROM system.%s WHERE keyspace_name = ? AND view_name = ?", VIEWS_BUILDS_IN_PROGRESS), ksname, viewName);
         forceBlockingFlush(VIEWS_BUILDS_IN_PROGRESS);
+    }
+
+    public static void viewBuiltReplicated(String ksname, String viewName)
+    {
+        setViewBuilt(ksname, viewName, true);
+        forceBlockingFlush(BUILT_VIEWS);
     }
 
     public static void updateViewBuildStatus(String ksname, String viewName, Token token)
