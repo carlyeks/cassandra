@@ -43,6 +43,7 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
         public void begin(Conduit conduit, DateTieredCompactionStrategy strategy)
         {
             conduit.add(strategy.options.baseTime);
+            conduit.add(strategy.options.maxWindowSize);
         }
 
         public void end(Conduit conduit, DateTieredCompactionStrategy strategy)
