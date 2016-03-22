@@ -579,18 +579,16 @@ public final class SystemKeyspace
         // We flush the view built first, because if we fail now, we'll restart at the last place we checkpointed
         // view build.
         // If we flush the delete first, we'll have to restart from the beginning.
-        // Also, if the build succeeded, but the view build failed, we will be able to skip the view build check
-        // next boot.
+        // Also, if writing to the built_view succeeds, but the view_builds_in_progress deletion fails, we will be able
+        // to skip the view build next boot.
         setViewBuilt(ksname, viewName, false);
-        forceBlockingFlush(BUILT_VIEWS);
         executeInternal(String.format("DELETE FROM system.%s WHERE keyspace_name = ? AND view_name = ?", VIEWS_BUILDS_IN_PROGRESS), ksname, viewName);
         forceBlockingFlush(VIEWS_BUILDS_IN_PROGRESS);
     }
 
-    public static void viewBuiltReplicated(String ksname, String viewName)
+    public static void setViewBuiltReplicated(String ksname, String viewName)
     {
         setViewBuilt(ksname, viewName, true);
-        forceBlockingFlush(BUILT_VIEWS);
     }
 
     public static void updateViewBuildStatus(String ksname, String viewName, Token token)

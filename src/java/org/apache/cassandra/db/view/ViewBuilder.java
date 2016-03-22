@@ -198,7 +198,7 @@ public class ViewBuilder extends CompactionInfo.Holder
         try
         {
             SystemDistributedKeyspace.successfulViewBuild(ksname, viewName, localHostId);
-            SystemKeyspace.viewBuiltReplicated(ksname, viewName);
+            SystemKeyspace.setViewBuiltReplicated(ksname, viewName);
         }
         catch (Exception e)
         {

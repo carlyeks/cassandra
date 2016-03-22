@@ -4381,15 +4381,17 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public Map<String, String> getViewBuildStatuses(String keyspace, String view)
     {
         Map<UUID, String> coreViewStatus = SystemDistributedKeyspace.viewStatus(keyspace, view);
-        Map<String, String> hostIdToEndpoint = getHostIdToEndpoint();
+        Map<InetAddress, UUID> hostIdToEndpoint = tokenMetadata.getEndpointToHostIdMapForReading();
         Map<String, String> result = new HashMap<>();
 
-        for (UUID hostId : tokenMetadata.getEndpointToHostIdMapForReading().values())
+        for (Map.Entry<InetAddress, UUID> entry : hostIdToEndpoint.entrySet())
         {
-            String endpoint = hostIdToEndpoint.get(hostId.toString());
-            result.put(endpoint, coreViewStatus.containsKey(hostId)
-                                 ? coreViewStatus.get(hostId)
-                                 : "UNKNOWN");
+            UUID hostId = entry.getValue();
+            InetAddress endpoint = entry.getKey();
+            result.put(endpoint.toString(),
+                       coreViewStatus.containsKey(hostId)
+                       ? coreViewStatus.get(hostId)
+                       : "UNKNOWN");
         }
 
         return Collections.unmodifiableMap(result);

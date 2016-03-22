@@ -266,10 +266,10 @@ public final class SystemDistributedKeyspace
         UntypedResultSet results;
         try
         {
-            results = QueryProcessor.executeInternal(String.format(query, NAME, VIEW_BUILD_STATUS),
-                                                     ConsistencyLevel.ONE,
-                                                     keyspace,
-                                                     view);
+            results = QueryProcessor.execute(String.format(query, NAME, VIEW_BUILD_STATUS),
+                                             ConsistencyLevel.ONE,
+                                             keyspace,
+                                             view);
         } catch (Exception e) {
             return Collections.emptyMap();
         }
