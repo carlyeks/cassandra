@@ -650,4 +650,32 @@ public class CompactionStrategyManager implements INotificationConsumer
             return repaired.get(0).createSSTableMultiWriter(descriptor, keyCount, repairedAt, collector, header, indexes, txn);
         }
     }
+
+    public boolean isRepaired(AbstractCompactionStrategy strategy)
+    {
+        return repaired.contains(strategy);
+    }
+
+    public List<String> getStrategyFolders(AbstractCompactionStrategy strategy)
+    {
+        if (cfs.getPartitioner().splitter().isPresent())
+        {
+            int unrepairedIndex = unrepaired.indexOf(strategy);
+            if (unrepairedIndex > 0)
+            {
+                return Collections.singletonList(locations[unrepairedIndex].location.getAbsolutePath());
+            }
+            int repairedIndex = repaired.indexOf(strategy);
+            if (repairedIndex > 0)
+            {
+                return Collections.singletonList(locations[repairedIndex].location.getAbsolutePath());
+            }
+        }
+        List<String> folders = new ArrayList<>(locations.length);
+        for (Directories.DataDirectory location : locations)
+        {
+            folders.add(location.location.getAbsolutePath());
+        }
+        return folders;
+    }
 }

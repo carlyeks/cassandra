@@ -18,6 +18,7 @@
 package org.apache.cassandra.db.compaction;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Predicate;
@@ -471,10 +472,13 @@ public class DateTieredCompactionStrategy extends AbstractCompactionStrategy
             public JsonNode options()
             {
                 ObjectNode node = JsonNodeFactory.instance.objectNode();
+                TimeUnit resolution = DateTieredCompactionStrategy.this.options.timestampResolution;
+                node.put(DateTieredCompactionStrategyOptions.TIMESTAMP_RESOLUTION_KEY,
+                         resolution.toString());
                 node.put(DateTieredCompactionStrategyOptions.BASE_TIME_KEY,
-                         DateTieredCompactionStrategy.this.options.baseTime);
+                         resolution.toSeconds(DateTieredCompactionStrategy.this.options.baseTime));
                 node.put(DateTieredCompactionStrategyOptions.MAX_WINDOW_SIZE_KEY,
-                         DateTieredCompactionStrategy.this.options.maxWindowSize);
+                         resolution.toSeconds(DateTieredCompactionStrategy.this.options.maxWindowSize));
                 return node;
             }
         };
