@@ -658,6 +658,7 @@ public class CompactionStrategyManager implements INotificationConsumer
 
     public List<String> getStrategyFolders(AbstractCompactionStrategy strategy)
     {
+        Directories.DataDirectory[] locations = cfs.getDirectories().getWriteableLocations();
         if (cfs.getPartitioner().splitter().isPresent())
         {
             int unrepairedIndex = unrepaired.indexOf(strategy);
