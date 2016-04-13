@@ -63,7 +63,7 @@ public abstract class AbstractCompactionStrategy
     // minimum interval needed to perform tombstone removal compaction in seconds, default 86400 or 1 day.
     protected static final long DEFAULT_TOMBSTONE_COMPACTION_INTERVAL = 86400;
     protected static final boolean DEFAULT_UNCHECKED_TOMBSTONE_COMPACTION_OPTION = false;
-    protected static final boolean DEFAULT_LOG_ALL_OPTION = false;
+    protected static final boolean DEFAULT_LOG_ALL_OPTION = true;
 
     protected static final String TOMBSTONE_THRESHOLD_OPTION = "tombstone_threshold";
     protected static final String TOMBSTONE_COMPACTION_INTERVAL_OPTION = "tombstone_compaction_interval";
