@@ -114,6 +114,7 @@ import org.apache.cassandra.db.TruncateVerbHandler;
 import org.apache.cassandra.db.commitlog.CommitLog;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.lifecycle.LifecycleTransaction;
+import org.apache.cassandra.db.view.ViewManager;
 import org.apache.cassandra.dht.BootStrapper;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.dht.Range;
@@ -4654,6 +4655,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                                            .toArray(new String[idxNames.length]);
 
         ColumnFamilyStore.rebuildSecondaryIndex(ksName, cfName, indices);
+    }
+
+    public void rebuildView(String ksName, String viewName)
+    {
+        ViewManager.rebuildView(ksName, viewName);
     }
 
     public void resetLocalSchema() throws IOException

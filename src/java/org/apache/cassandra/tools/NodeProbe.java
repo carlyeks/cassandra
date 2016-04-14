@@ -1040,6 +1040,11 @@ public class NodeProbe implements AutoCloseable
         ssProxy.rebuildSecondaryIndex(ksName, cfName, idxNames);
     }
 
+    public void rebuildView(String ksName, String viewName)
+    {
+        ssProxy.rebuildView(ksName, viewName);
+    }
+
     public String getGossipInfo()
     {
         return fdProxy.getAllEndpointStates();

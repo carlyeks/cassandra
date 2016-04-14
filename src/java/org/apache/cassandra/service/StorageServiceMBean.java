@@ -575,6 +575,11 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     public void rebuildSecondaryIndex(String ksName, String cfName, String... idxNames);
 
+    /**
+     * rebuild the specified views
+     */
+    public void rebuildView(String ksName, String viewName);
+
     public void resetLocalSchema() throws IOException;
 
     /**

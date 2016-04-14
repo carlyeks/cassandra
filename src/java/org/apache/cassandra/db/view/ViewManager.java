@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.db.view;
 
-import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -35,8 +34,6 @@ import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.repair.SystemDistributedKeyspace;
 import org.apache.cassandra.service.StorageProxy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Manages {@link View}'s for a single {@link ColumnFamilyStore}. All of the views for that table are created when this
@@ -44,13 +41,11 @@ import org.slf4j.LoggerFactory;
  *
  * The main purposes of the manager are to provide a single location for updates to be vetted to see whether they update
  * any views {@link ViewManager#updatesAffectView(Collection, boolean)}, provide locks to prevent multiple
- * updates from creating incoherent updates in the view {@link ViewManager#acquireLockFor(ByteBuffer)}, and
+ * updates from creating incoherent updates in the view {@link ViewManager#acquireLockFor(int)}, and
  * to affect change on the view.
  */
 public class ViewManager
 {
-    private static final Logger logger = LoggerFactory.getLogger(ViewManager.class);
-
     public class ForStore
     {
         private final ConcurrentNavigableMap<String, View> viewsByName;
@@ -256,6 +251,10 @@ public class ViewManager
                 forStore = previous;
         }
         return forStore;
+    }
+
+    public static void rebuildView(String ksName, String viewName)
+    {
     }
 
     public static Lock acquireLockFor(int keyAndCfidHash)

@@ -178,6 +178,7 @@ public final class SchemaKeyspace
                 + "memtable_flush_period_in_ms int,"
                 + "min_index_interval int,"
                 + "read_repair_chance double,"
+                + "rebuild_id uuid,"
                 + "speculative_retry text,"
                 + "PRIMARY KEY ((keyspace_name), view_name))");
 
