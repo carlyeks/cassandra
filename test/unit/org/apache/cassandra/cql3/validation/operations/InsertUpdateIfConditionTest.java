@@ -338,6 +338,50 @@ public class InsertUpdateIfConditionTest extends CQLTester
     }
 
     /**
+     * Test CASSANDRA-10532
+     */
+    @Test
+    public void testStaticColumnsCasDelete() throws Throwable
+    {
+        createTable("CREATE TABLE %s (pk int, ck int, static_col int static, value int, PRIMARY KEY (pk, ck))");
+        execute("INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 1, 2);
+        execute("INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 3, 4);
+        execute("INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 5, 6);
+        execute("INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 1, 7, 8);
+        execute("INSERT INTO %s (pk, ck, value) VALUES (?, ?, ?)", 2, 1, 2);
+        execute("INSERT INTO %s (pk, static_col) VALUES (?, ?)", 1, 1);
+
+        assertRows(execute("DELETE static_col FROM %s WHERE pk = ? IF static_col = ?", 1, 2), row(false, 1));
+        assertRows(execute("DELETE static_col FROM %s WHERE pk = ? IF static_col = ?", 1, 1), row(true));
+
+        assertRows(execute("SELECT pk, ck, static_col, value FROM %s WHERE pk = 1"),
+                   row(1, 1, null, 2),
+                   row(1, 3, null, 4),
+                   row(1, 5, null, 6),
+                   row(1, 7, null, 8));
+
+        // DELETE of an underspecified PRIMARY KEY should not succeed if static is not only restriction
+        execute("INSERT INTO %s (pk, static_col) VALUES (?, ?)", 1, 1);
+
+        assertInvalidMessage("DELETE statements with IF conditions on non-static columns must not delete static columns",
+                             "DELETE static_col FROM %s WHERE pk = ? IF value = ? AND static_col = ?", 1, 2, 1);
+
+        assertInvalidMessage("DELETE statements with IF conditions only on static columns must not delete non-static columns",
+                             "DELETE static_col, value FROM %s WHERE pk = ? IF static_col = ?", 1, 2);
+
+        assertInvalidMessage("DELETE statements with IF conditions on non-static columns must not delete static columns",
+                             "DELETE static_col FROM %s WHERE pk = ? AND ck = ? IF value = ?", 1, 2, 2);
+
+        assertRows(execute("DELETE value FROM %s WHERE pk = ? AND ck = ? IF value = ? AND static_col = ?", 1, 1, 2, 2), row(false, 2, 1));
+        assertRows(execute("DELETE value FROM %s WHERE pk = ? AND ck = ? IF value = ? AND static_col = ?", 1, 1, 2, 1), row(true));
+        assertRows(execute("SELECT pk, ck, static_col, value FROM %s WHERE pk = 1"),
+                   row(1, 1, 1, null),
+                   row(1, 3, 1, 4),
+                   row(1, 5, 1, 6),
+                   row(1, 7, 1, 8));
+    }
+
+    /**
      * Migrated from cql_tests.py:TestCQL.bug_6069_test()
      */
     @Test
