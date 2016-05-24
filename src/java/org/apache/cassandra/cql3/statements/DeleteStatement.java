@@ -166,9 +166,28 @@ public class DeleteStatement extends ModificationStatement
                                                        attrs);
 
             if (stmt.hasConditions())
-                checkTrue(restrictions.hasAllPKColumnsRestrictedByEqualities(),
+            {
+                // All primary keys must be specified, unless this has static column restrictions
+                boolean onlyHasConditionsOnStaticColumns = conditions.appliesToStaticColumns()
+                                                           && !conditions.appliesToRegularColumns();
+
+
+                if (onlyHasConditionsOnStaticColumns)
+                {
+                    checkTrue(!operations.appliesToRegularColumns(),
+                              "DELETE statements with IF conditions only on static columns must not delete non-static columns");
+                }
+                else
+                {
+                    checkTrue(!operations.appliesToStaticColumns(),
+                              "DELETE statements with IF conditions on non-static columns must not delete static columns");
+                }
+
+                checkTrue(onlyHasConditionsOnStaticColumns || restrictions.hasAllPKColumnsRestrictedByEqualities(),
                           "DELETE statements must restrict all PRIMARY KEY columns with equality relations" +
                           " in order to use IF conditions");
+            }
+
             return stmt;
         }
     }
