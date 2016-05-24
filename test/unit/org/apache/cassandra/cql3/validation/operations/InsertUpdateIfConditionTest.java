@@ -355,6 +355,10 @@ public class InsertUpdateIfConditionTest extends CQLTester
                              "to use IF conditions, but column 'ck' is not restricted",
                              "DELETE static_col FROM %s WHERE pk = ? IF value = ? AND static_col = ?", 1, 2, 1);
 
+        assertInvalidMessage("DELETE statements with IF conditions only on static columns must not delete non-static columns, " +
+                             "but column 'value' is specified for deletion",
+                             "DELETE static_col, value FROM %s WHERE pk = ? IF static_col = ?", 1, 2);
+
         assertRows(execute("DELETE value FROM %s WHERE pk = ? AND ck = ? IF value = ? AND static_col = ?", 1, 1, 2, 2), row(false, 2, 1));
         assertRows(execute("DELETE value FROM %s WHERE pk = ? AND ck = ? IF value = ? AND static_col = ?", 1, 1, 2, 1), row(true));
         assertRows(execute("SELECT pk, ck, static_col, value FROM %s WHERE pk = 1"),
