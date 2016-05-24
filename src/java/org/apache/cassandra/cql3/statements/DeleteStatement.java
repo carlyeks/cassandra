@@ -89,7 +89,11 @@ public class DeleteStatement extends ModificationStatement
 
     protected void validateWhereClauseForConditions() throws InvalidRequestException
     {
-        Iterator<ColumnDefinition> iterator = Iterators.concat(cfm.partitionKeyColumns().iterator(), cfm.clusteringColumns().iterator());
+        boolean onlyHasConditionsOnStaticColumns = hasStaticConditions() && !hasRegularConditions();
+
+        Iterator<ColumnDefinition> iterator = onlyHasConditionsOnStaticColumns
+                                              ? cfm.partitionKeyColumns().iterator()
+                                              : Iterators.concat(cfm.partitionKeyColumns().iterator(), cfm.clusteringColumns().iterator());
         while (iterator.hasNext())
         {
             ColumnDefinition def = iterator.next();
@@ -97,11 +101,37 @@ public class DeleteStatement extends ModificationStatement
             if (restriction == null || !(restriction.isEQ() || restriction.isIN()))
             {
                 throw new InvalidRequestException(
-                        String.format("DELETE statements must restrict all PRIMARY KEY columns with equality relations in order " +
-                                      "to use IF conditions, but column '%s' is not restricted", def.name));
+                        String.format("DELETE statements must restrict all %s KEY columns with equality relations in order " +
+                                      "to use IF conditions%s, but column '%s' is not restricted",
+                                      onlyHasConditionsOnStaticColumns ? "PARTITION" : "PRIMARY",
+                                      onlyHasConditionsOnStaticColumns ? " on static columns" : "", def.name));
             }
         }
 
+        if (onlyHasConditionsOnStaticColumns)
+        {
+            for (Operation oper : getOperations())
+            {
+                if (!oper.column.isStatic())
+                {
+                    throw new InvalidRequestException(String.format("DELETE statements with IF conditions only on static columns must " +
+                                                                    "not delete non-static columns, but column '%s' is specified for deletion",
+                                                                    oper.column.name));
+                }
+            }
+        }
+        else
+        {
+            for (Operation oper : getOperations())
+            {
+                if (oper.column.isStatic())
+                {
+                    throw new InvalidRequestException(String.format("DELETE statements with IF conditions on non-static columns must " +
+                                                                    "not delete static columns, but column '%s' is specified for deletion",
+                                                                    oper.column.name));
+                }
+            }
+        }
     }
 
     public static class Parsed extends ModificationStatement.Parsed
