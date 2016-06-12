@@ -46,15 +46,18 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 {
     private static final Logger logger = LoggerFactory.getLogger(LeveledCompactionStrategy.class);
     private static final String SSTABLE_SIZE_OPTION = "sstable_size_in_mb";
+    private static final String MAX_OVERLAPPING_LEVEL_OPTION = "max_overlapping_level";
 
     @VisibleForTesting
     final LeveledManifest manifest;
     private final int maxSSTableSizeInMB;
+    private final int maxOverlappingLevel;
 
     public LeveledCompactionStrategy(ColumnFamilyStore cfs, Map<String, String> options)
     {
         super(cfs, options);
         int configuredMaxSSTableSize = 160;
+        int configuredMaxOverlappingLevel = 0;
         SizeTieredCompactionStrategyOptions localOptions = new SizeTieredCompactionStrategyOptions(options);
         if (options != null)
         {             
@@ -71,8 +74,13 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
                                 configuredMaxSSTableSize, cfs.name, cfs.getColumnFamilyName());
                 }
             }
+            if (options.containsKey(MAX_OVERLAPPING_LEVEL_OPTION))
+            {
+                configuredMaxOverlappingLevel = Integer.parseInt(options.get(MAX_OVERLAPPING_LEVEL_OPTION));
+            }
         }
         maxSSTableSizeInMB = configuredMaxSSTableSize;
+        maxOverlappingLevel = configuredMaxOverlappingLevel;
 
         manifest = new LeveledManifest(cfs, this.maxSSTableSizeInMB, localOptions);
         logger.trace("Created {}", manifest);
@@ -88,10 +96,6 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
         return manifest.getAllLevelSize();
     }
 
-    /**
-     * the only difference between background and maximal in LCS is that maximal is still allowed
-     * (by explicit user request) even when compaction is disabled.
-     */
     @SuppressWarnings("resource")
     public AbstractCompactionTask getNextBackgroundTask(int gcBefore)
     {
@@ -464,7 +468,9 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
 
             public JsonNode options()
             {
-                return null;
+                ObjectNode node = JsonNodeFactory.instance.objectNode();
+                node.put("molo", maxOverlappingLevel);
+                return node;
             }
         };
     }
@@ -487,7 +493,22 @@ public class LeveledCompactionStrategy extends AbstractCompactionStrategy
             throw new ConfigurationException(String.format("%s is not a parsable int (base10) for %s", size, SSTABLE_SIZE_OPTION), ex);
         }
 
+        String level = options.containsKey(MAX_OVERLAPPING_LEVEL_OPTION) ? options.get(MAX_OVERLAPPING_LEVEL_OPTION) : "0";
+        try
+        {
+            int moLevel = Integer.parseInt(level);
+            if (moLevel < 0)
+            {
+                throw new ConfigurationException(String.format("%s is not a parsable int (base10) for %s", level, MAX_OVERLAPPING_LEVEL_OPTION));
+            }
+        }
+        catch (NumberFormatException ex)
+        {
+            throw new ConfigurationException(String.format("%s is not a parsable int (base10) for %s", level, MAX_OVERLAPPING_LEVEL_OPTION), ex);
+        }
+
         uncheckedOptions.remove(SSTABLE_SIZE_OPTION);
+        uncheckedOptions.remove(MAX_OVERLAPPING_LEVEL_OPTION);
 
         uncheckedOptions = SizeTieredCompactionStrategyOptions.validateOptions(options, uncheckedOptions);
 

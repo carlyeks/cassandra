@@ -281,6 +281,34 @@ public class LeveledManifest
             }
             return null;
         }
+
+        // The new overlapping compactions allow for more SSTables to be included from a level when a compaction is
+        // performed. The target for all compactions is 32 sstables.
+        //
+        // Multiple priorities are concerned when selecting a set of sstables to compact. The first priority is to try
+        // to get as much data from low levels up to higher ones.
+        //
+        // To decide whether this is necessary or not, we need to go through each level and compare the size of the level
+        // to the target for each level. These are promotion compactions.
+        //
+        // If a promotion compaction is necessary, the decision needs to account for multiple other things; we will
+        // first assume that it is *not* necessary.
+        //
+        // If a promotion compaction is not necessary, we will also look for other possible compactions; these are
+        // anti-overlapping compactions. These are required anytime there are any sstables that are currently
+        // overlapping in a level.
+        //
+        // During candidate selection for a promotion compaction which is below MOLO:
+        // - We want to minimize the write amplification of leveled compaction
+        // - We want to try to eliminate as much overlap that is currently occuring in the level we are promoting from
+        // - We want to include tables in the next level up *iff* we have space after the above objectives are met
+        // - We must include tables if we are currently in MOLO
+        //
+        // During candidate selection for a anti-overlap compaction:
+        // - We want to minimize number of sstables which are involved in each compaction in order to be able to quickly
+        //   move back to promotion compactions if possible
+        // - We want to maximize the number of overlaps resolved by each compaction
+
         // LevelDB gives each level a score of how much data it contains vs its ideal amount, and
         // compacts the level with the highest score. But this falls apart spectacularly once you
         // get behind.  Consider this set of levels:
