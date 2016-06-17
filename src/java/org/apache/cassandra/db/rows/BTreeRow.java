@@ -398,7 +398,7 @@ public class BTreeRow extends AbstractRow
             return this;
 
         if (info.isEmpty() && deletion.isLive() && BTree.isEmpty(transformed))
-            return null;
+            return clustering == Clustering.STATIC_CLUSTERING ? Rows.EMPTY_STATIC_ROW : null;
 
         int minDeletionTime = minDeletionTime(transformed, info, deletion.time());
         return BTreeRow.create(clustering, info, deletion, transformed, minDeletionTime);
