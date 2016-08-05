@@ -280,6 +280,18 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         // because the old one still aliases the previous comparator.
         if (data.getView().getCurrentMemtable().initialComparator != metadata.comparator)
             switchMemtable();
+
+        for (SSTableReader reader : data.getView().liveSSTables())
+        {
+            try
+            {
+                reader.reload();
+            }
+            catch (IOException ioe)
+            {
+                throw new RuntimeException(ioe);
+            }
+        }
     }
 
     void scheduleFlush()

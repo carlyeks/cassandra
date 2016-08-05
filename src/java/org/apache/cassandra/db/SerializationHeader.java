@@ -63,7 +63,18 @@ public class SerializationHeader
         this.clusteringTypes = clusteringTypes;
         this.columns = columns;
         this.stats = stats;
-        this.typeMap = typeMap;
+        boolean allSame = true;
+        if (typeMap != null)
+        {
+            for (ColumnDefinition column : columns)
+            {
+                if (!(typeMap.containsKey(column.name.bytes) && typeMap.get(column.name.bytes).equals(column.type)))
+                {
+                    allSame = false;
+                }
+            }
+        }
+        this.typeMap = allSame ? null : typeMap;
     }
 
     public static SerializationHeader makeWithoutStats(CFMetaData metadata)

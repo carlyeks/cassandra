@@ -59,7 +59,8 @@ public class SerializationHelper
         this.flag = flag;
         this.version = version;
         this.columnsToFetch = columnsToFetch;
-        this.droppedColumns = metadata.getDroppedColumns();
+        Map<ByteBuffer, CFMetaData.DroppedColumn> droppedColumns = metadata.getDroppedColumns();
+        this.droppedColumns = droppedColumns.isEmpty() ? null : droppedColumns;
     }
 
     public SerializationHelper(CFMetaData metadata, int version, Flag flag)
@@ -115,7 +116,7 @@ public class SerializationHelper
     public void startOfComplexColumn(ColumnDefinition column)
     {
         this.tester = columnsToFetch == null ? null : columnsToFetch.newTester(column);
-        this.currentDroppedComplex = droppedColumns.get(column.name.bytes);
+        this.currentDroppedComplex = droppedColumns == null ? null : droppedColumns.get(column.name.bytes);
     }
 
     public void endOfComplexColumn()
@@ -125,7 +126,9 @@ public class SerializationHelper
 
     public boolean isDropped(Cell cell, boolean isComplex)
     {
-        CFMetaData.DroppedColumn dropped = isComplex ? currentDroppedComplex : droppedColumns.get(cell.column().name.bytes);
+        CFMetaData.DroppedColumn dropped = isComplex
+                                           ? currentDroppedComplex
+                                           : (droppedColumns == null ? null : droppedColumns.get(cell.column().name.bytes));
         return dropped != null && cell.timestamp() <= dropped.droppedTime;
     }
 

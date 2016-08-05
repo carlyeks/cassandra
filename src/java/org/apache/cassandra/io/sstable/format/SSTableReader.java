@@ -206,7 +206,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     protected IndexSummary indexSummary;
     protected IFilter bf;
 
-    protected final RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
+    protected volatile RowIndexEntry.IndexSerializer rowIndexEntrySerializer;
 
     protected InstrumentingCache<KeyCacheKey, RowIndexEntry> keyCache;
 
@@ -219,7 +219,7 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     // not final since we need to be able to change level on a file.
     protected volatile StatsMetadata sstableMetadata;
 
-    public final SerializationHeader header;
+    public volatile SerializationHeader header;
 
     protected final AtomicLong keyCacheHit = new AtomicLong(0);
     protected final AtomicLong keyCacheRequest = new AtomicLong(0);
@@ -1923,6 +1923,13 @@ public abstract class SSTableReader extends SSTable implements SelfRefCounted<SS
     public void reloadSSTableMetadata() throws IOException
     {
         this.sstableMetadata = (StatsMetadata) descriptor.getMetadataSerializer().deserialize(descriptor, MetadataType.STATS);
+    }
+
+    public void reload() throws IOException
+    {
+        SerializationHeader.Component header = (SerializationHeader.Component) descriptor.getMetadataSerializer().deserialize(descriptor, MetadataType.HEADER);
+        this.header = header == null ? null : header.toHeader(metadata);
+        this.rowIndexEntrySerializer = descriptor.version.getSSTableFormat().getIndexSerializer(metadata, descriptor.version, this.header);
     }
 
     public StatsMetadata getSSTableMetadata()
