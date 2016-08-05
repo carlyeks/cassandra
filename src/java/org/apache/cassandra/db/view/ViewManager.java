@@ -134,8 +134,13 @@ public class ViewManager
         // disabled via JMX or nodetool as that sets SS to an uninitialized state.
         if (!StorageService.instance.isInitialized())
         {
-            logger.info("Not submitting build tasks for views in keyspace {} as " +
-                        "storage service is not initialized", keyspace.getName());
+            // If there are no views in the keyspace, logging that we aren't going to build
+            // the views is confusing at startup
+            if (!viewsByName.isEmpty())
+            {
+                logger.info("Not submitting build tasks for views in keyspace {} as " +
+                            "storage service is not initialized", keyspace.getName());
+            }
             return;
         }
 
