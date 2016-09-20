@@ -806,7 +806,6 @@ alterKeyspaceStatement returns [AlterKeyspaceStatement expr]
 
 
 /**
- * ALTER COLUMN FAMILY <CF> ALTER <column> TYPE <newtype>;
  * ALTER COLUMN FAMILY <CF> ADD <column> <newtype>;
  * ALTER COLUMN FAMILY <CF> DROP <column>;
  * ALTER COLUMN FAMILY <CF> WITH <property> = <value>;
