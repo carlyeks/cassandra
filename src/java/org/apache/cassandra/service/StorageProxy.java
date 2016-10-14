@@ -1803,6 +1803,7 @@ public class StorageProxy implements StorageProxyMBean
                 repairHandler = new ReadCallback(resolver,
                                                  ConsistencyLevel.ALL,
                                                  executor.getContactedReplicas().size(),
+                                                 null,
                                                  command,
                                                  keyspace,
                                                  executor.handler.endpoints,
@@ -2200,7 +2201,7 @@ public class StorageProxy implements StorageProxyMBean
             int blockFor = consistency.blockFor(keyspace);
             int minResponses = Math.min(toQuery.filteredEndpoints.size(), blockFor);
             List<InetAddress> minimalEndpoints = toQuery.filteredEndpoints.subList(0, minResponses);
-            ReadCallback handler = new ReadCallback(resolver, consistency, rangeCommand, minimalEndpoints, queryStartNanoTime);
+            ReadCallback handler = ReadCallback.create(resolver, consistency, rangeCommand, minimalEndpoints, queryStartNanoTime);
 
             handler.assureSufficientLiveNodes();
 

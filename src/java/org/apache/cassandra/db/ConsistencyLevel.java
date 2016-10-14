@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
@@ -254,6 +255,30 @@ public enum ConsistencyLevel
         }
 
         return waitSet;
+    }
+
+    public Map<String, Integer> dcBlockFor(Keyspace keyspace)
+    {
+        Map<String, Integer> map = new HashMap<>();
+        switch (this)
+        {
+            case EACH_QUORUM:
+                NetworkTopologyStrategy strategy = (NetworkTopologyStrategy) keyspace.getReplicationStrategy();
+                for (String dc : strategy.getDatacenters())
+                {
+                    map.put(dc, localQuorumFor(keyspace, dc));
+                }
+                break;
+            case LOCAL_ONE:
+                map.put(DatabaseDescriptor.getLocalDataCenter(), 1);
+                break;
+            case LOCAL_QUORUM:
+                map.put(DatabaseDescriptor.getLocalDataCenter(), localQuorumFor(keyspace, DatabaseDescriptor.getLocalDataCenter()));
+                break;
+            default:
+                return null;
+        }
+        return map;
     }
 
     public boolean isSufficientLiveNodes(Keyspace keyspace, Iterable<InetAddress> liveEndpoints)

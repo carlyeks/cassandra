@@ -67,7 +67,11 @@ public abstract class AbstractReadExecutor
     {
         this.command = command;
         this.targetReplicas = targetReplicas;
-        this.handler = new ReadCallback(new DigestResolver(keyspace, command, consistencyLevel, targetReplicas.size()), consistencyLevel, command, targetReplicas, queryStartNanoTime);
+        this.handler = ReadCallback.create(new DigestResolver(keyspace, command, consistencyLevel, targetReplicas.size()),
+                                           consistencyLevel,
+                                           command,
+                                           targetReplicas,
+                                           queryStartNanoTime);
         this.traceState = Tracing.instance.get();
 
         // Set the digest version (if we request some digests). This is the smallest version amongst all our target replicas since new nodes
@@ -152,10 +156,7 @@ public abstract class AbstractReadExecutor
     {
         Keyspace keyspace = Keyspace.open(command.metadata().ksName);
         List<InetAddress> allReplicas = StorageProxy.getLiveSortedEndpoints(keyspace, command.partitionKey());
-        // 11980: Excluding EACH_QUORUM reads from potential RR, so that we do not miscount DC responses
-        ReadRepairDecision repairDecision = consistencyLevel == ConsistencyLevel.EACH_QUORUM
-                                            ? ReadRepairDecision.NONE
-                                            : command.metadata().newReadRepairDecision();
+        ReadRepairDecision repairDecision = command.metadata().newReadRepairDecision();
         List<InetAddress> targetReplicas = consistencyLevel.filterForQuery(keyspace, allReplicas, repairDecision);
 
         // Throw UAE early if we don't have enough replicas.
@@ -171,9 +172,7 @@ public abstract class AbstractReadExecutor
         SpeculativeRetryParam retry = cfs.metadata.params.speculativeRetry;
 
         // Speculative retry is disabled *OR* there are simply no extra replicas to speculate.
-        // 11980: Disable speculative retry if using EACH_QUORUM in order to prevent miscounting DC responses
         if (retry.equals(SpeculativeRetryParam.NONE)
-            || consistencyLevel == ConsistencyLevel.EACH_QUORUM
             || consistencyLevel.blockFor(keyspace) == allReplicas.size())
             return new NeverSpeculatingReadExecutor(keyspace, command, consistencyLevel, targetReplicas, queryStartNanoTime);
 

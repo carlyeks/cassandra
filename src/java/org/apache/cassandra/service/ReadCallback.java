@@ -19,12 +19,16 @@ package org.apache.cassandra.service;
 
 import java.net.InetAddress;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
+import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,9 +62,11 @@ public class ReadCallback implements IAsyncCallbackWithFailure<ReadResponse>
     private final long queryStartNanoTime;
     final int blockfor;
     final List<InetAddress> endpoints;
+    final Map<String, AtomicInteger> dcBlockFor;
+    final Set<String> completedDcs;
     private final ReadCommand command;
     private final ConsistencyLevel consistencyLevel;
-    private static final AtomicIntegerFieldUpdater<ReadCallback> recievedUpdater
+    private static final AtomicIntegerFieldUpdater<ReadCallback> receivedUpdater
             = AtomicIntegerFieldUpdater.newUpdater(ReadCallback.class, "received");
     private volatile int received = 0;
     private static final AtomicIntegerFieldUpdater<ReadCallback> failuresUpdater
@@ -70,25 +76,19 @@ public class ReadCallback implements IAsyncCallbackWithFailure<ReadResponse>
 
     private final Keyspace keyspace; // TODO push this into ConsistencyLevel?
 
-    /**
-     * Constructor when response count has to be calculated and blocked for.
-     */
-    public ReadCallback(ResponseResolver resolver, ConsistencyLevel consistencyLevel, ReadCommand command, List<InetAddress> filteredEndpoints, long queryStartNanoTime)
-    {
-        this(resolver,
-             consistencyLevel,
-             consistencyLevel.blockFor(Keyspace.open(command.metadata().ksName)),
-             command,
-             Keyspace.open(command.metadata().ksName),
-             filteredEndpoints,
-             queryStartNanoTime);
-    }
-
-    public ReadCallback(ResponseResolver resolver, ConsistencyLevel consistencyLevel, int blockfor, ReadCommand command, Keyspace keyspace, List<InetAddress> endpoints, long queryStartNanoTime)
+    public ReadCallback(ResponseResolver resolver,
+                        ConsistencyLevel consistencyLevel,
+                        int blockfor,
+                        Map<String, AtomicInteger> dcBlockFor,
+                        ReadCommand command,
+                        Keyspace keyspace,
+                        List<InetAddress> endpoints, long queryStartNanoTime)
     {
         this.command = command;
         this.keyspace = keyspace;
         this.blockfor = blockfor;
+        this.dcBlockFor = dcBlockFor;
+        completedDcs = this.dcBlockFor == null ? null : Sets.newConcurrentHashSet(dcBlockFor.keySet());
         this.consistencyLevel = consistencyLevel;
         this.resolver = resolver;
         this.queryStartNanoTime = queryStartNanoTime;
@@ -99,6 +99,40 @@ public class ReadCallback implements IAsyncCallbackWithFailure<ReadResponse>
 
         if (logger.isTraceEnabled())
             logger.trace("Blockfor is {}; setting up requests to {}", blockfor, StringUtils.join(this.endpoints, ","));
+    }
+
+    public static ReadCallback create(ResponseResolver resolver,
+                                      ConsistencyLevel consistencyLevel,
+                                      ReadCommand command,
+                                      List<InetAddress> targetReplicas,
+                                      long queryStartNanoTime)
+    {
+        Map<String, AtomicInteger> dcLocalMap = null;
+        int blockFor = 0;
+        Keyspace keyspace = Keyspace.open(command.metadata().ksName);
+        if (consistencyLevel == ConsistencyLevel.EACH_QUORUM)
+        {
+            dcLocalMap = new HashMap<>();
+            Map<String, Integer> map = consistencyLevel.dcBlockFor(keyspace);
+            for (Map.Entry<String, Integer> entry : map.entrySet())
+            {
+                int dcBlockFor = entry.getValue();
+                blockFor += dcBlockFor;
+                dcLocalMap.put(entry.getKey(), new AtomicInteger(dcBlockFor));
+            }
+        }
+        else
+        {
+            blockFor = consistencyLevel.blockFor(keyspace);
+        }
+        return new ReadCallback(resolver,
+                                consistencyLevel,
+                                blockFor,
+                                dcLocalMap,
+                                command,
+                                keyspace,
+                                targetReplicas,
+                                queryStartNanoTime);
     }
 
     public boolean await(long timePastStart, TimeUnit unit)
@@ -153,18 +187,49 @@ public class ReadCallback implements IAsyncCallbackWithFailure<ReadResponse>
         return blockfor;
     }
 
+    private enum CompletionType
+    {
+        INCOMPLETE(false),
+        COMPLETE_BUT_NOT_ALL(true),
+        COMPLETE_ALL(true);
+
+        public final boolean isComplete;
+
+        CompletionType(boolean isComplete)
+        {
+            this.isComplete = isComplete;
+        }
+    }
+
+    private CompletionType convert(int completed)
+    {
+        if (completed < blockfor)
+            return CompletionType.INCOMPLETE;
+        if (completed < endpoints.size())
+            return CompletionType.COMPLETE_BUT_NOT_ALL;
+        return CompletionType.COMPLETE_ALL;
+    }
+
     public void response(MessageIn<ReadResponse> message)
     {
         resolver.preprocess(message);
-        int n = waitingFor(message.from)
-              ? recievedUpdater.incrementAndGet(this)
-              : received;
-        if (n >= blockfor && resolver.isDataPresent())
+        CompletionType complete;
+        if (consistencyLevel == ConsistencyLevel.EACH_QUORUM)
+        {
+            complete = eachQuorurmResponse(message.from);
+        }
+        else
+        {
+            complete = convert(waitingFor(message.from)
+                               ? receivedUpdater.incrementAndGet(this)
+                               : received);
+        }
+        if (complete.isComplete && resolver.isDataPresent())
         {
             condition.signalAll();
             // kick off a background digest comparison if this is a result that (may have) arrived after
             // the original resolve that get() kicks off as soon as the condition is signaled
-            if (blockfor < endpoints.size() && n == endpoints.size())
+            if (blockfor < endpoints.size() && complete == CompletionType.COMPLETE_ALL)
             {
                 TraceState traceState = Tracing.instance.get();
                 if (traceState != null)
@@ -172,6 +237,33 @@ public class ReadCallback implements IAsyncCallbackWithFailure<ReadResponse>
                 StageManager.getStage(Stage.READ_REPAIR).execute(new AsyncRepairRunner(traceState, queryStartNanoTime));
             }
         }
+    }
+
+    private CompletionType eachQuorurmResponse(InetAddress from)
+    {
+        String dc = DatabaseDescriptor.getEndpointSnitch().getDatacenter(from);
+        int inDcWaiting = dcBlockFor.get(DatabaseDescriptor.getEndpointSnitch().getDatacenter(from)).decrementAndGet();
+        // OK, if we are at (or below 0), we can check to make sure *all* dcs are complete
+        int received = 0;
+        if (inDcWaiting <= 0)
+        {
+            if (completedDcs.remove(dc))
+            {
+                received = receivedUpdater.incrementAndGet(this);
+
+                if (completedDcs.isEmpty())
+                {
+                    if (received == endpoints.size())
+                        return CompletionType.COMPLETE_ALL;
+                    return CompletionType.COMPLETE_BUT_NOT_ALL;
+                }
+            }
+        }
+        else
+        {
+            receivedUpdater.incrementAndGet(this);
+        }
+        return CompletionType.INCOMPLETE;
     }
 
     /**
