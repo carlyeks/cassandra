@@ -493,8 +493,8 @@ An existing user-defined type can be modified using an ``ALTER TYPE`` statement:
 
 You can:
 
-- modify the type of particular field (``ALTER TYPE address ALTER zip TYPE bigint``). The restrictions for such change
-  are the same than when :ref:`altering the type of column <alter-table-statement>`.
+- modify the type of particular field (``ALTER TYPE address ALTER zip TYPE bigint``).  See the :ref:`type
+  compatibility table <alter-type-type-compatibility>` below for detail on which type changes are accepted.
 - add a new field to the type (``ALTER TYPE address ADD country text``). That new field will be ``null`` for any values
   of the type created before the addition.
 - rename the fields of the type (``ALTER TYPE address RENAME zip TO zipcode``).
@@ -512,6 +512,49 @@ still in use by another type, table or function will result in an error.
 
 If the type dropped does not exist, an error will be returned unless ``IF EXISTS`` is used, in which case the operation
 is a no-op.
+
+.. _alter-type-type-compatibility:
+
+CQL type compatibility:
+~~~~~~~~~~~~~~~~~~~~~~~
+
+CQL data types may be converted only as the following table.
+
++-------------------------------------------------------+--------------------+
+| Existing type                                         | Can be altered to: |
++=======================================================+====================+
+| timestamp                                             | bigint             |
++-------------------------------------------------------+--------------------+
+| ascii, bigint, boolean, date, decimal, double, float, | blob               |
+| inet, int, smallint, text, time, timestamp, timeuuid, |                    |
+| tinyint, uuid, varchar, varint                        |                    |
++-------------------------------------------------------+--------------------+
+| int                                                   | date               |
++-------------------------------------------------------+--------------------+
+| ascii, varchar                                        | text               |
++-------------------------------------------------------+--------------------+
+| bigint                                                | time               |
++-------------------------------------------------------+--------------------+
+| bigint                                                | timestamp          |
++-------------------------------------------------------+--------------------+
+| timeuuid                                              | uuid               |
++-------------------------------------------------------+--------------------+
+| ascii, text                                           | varchar            |
++-------------------------------------------------------+--------------------+
+| bigint, int, timestamp                                | varint             |
++-------------------------------------------------------+--------------------+
+
+Clustering columns have stricter requirements, only the following conversions are allowed:
+
++------------------------+----------------------+
+| Existing type          | Can be altered to    |
++========================+======================+
+| ascii, text, varchar   | blob                 |
++------------------------+----------------------+
+| ascii, varchar         | text                 |
++------------------------+----------------------+
+| ascii, text            | varchar              |
++------------------------+----------------------+
 
 .. _tuples:
 

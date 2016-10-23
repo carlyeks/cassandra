@@ -88,18 +88,17 @@ public final class CFMetaData
     private final boolean isSuper;
     private final boolean isCounter;
     private final boolean isView;
-
     private final boolean isIndex;
 
-    public volatile ClusteringComparator comparator;  // bytes, long, timeuuid, utf8, etc. This is built directly from clusteringColumns
+    public final ClusteringComparator comparator;  // bytes, long, timeuuid, utf8, etc. This is built directly from clusteringColumns
     public final IPartitioner partitioner;            // partitioner the table uses
+    private final AbstractType<?> keyValidator;
 
     private final Serializers serializers;
 
     // non-final, for now
     public volatile TableParams params = TableParams.DEFAULT;
 
-    private volatile AbstractType<?> keyValidator = BytesType.instance;
     private volatile Map<ByteBuffer, DroppedColumn> droppedColumns = new HashMap<>();
     private volatile Triggers triggers = Triggers.none();
     private volatile Indexes indexes = Indexes.none();
@@ -298,35 +297,30 @@ public final class CFMetaData
         this.clusteringColumns = clusteringColumns;
         this.partitionColumns = partitionColumns;
 
-        //This needs to happen before serializers are set
-        //because they use comparator.subtypes()
+        this.serializers = new Serializers(this);
+
+        List<AbstractType<?>> keyTypes = extractTypes(partitionKeyColumns);
+        keyValidator = keyTypes.size() == 1 ? keyTypes.get(0) : CompositeType.getInstance(keyTypes);
+        comparator = new ClusteringComparator(extractTypes(clusteringColumns));
+
         rebuild();
 
         this.resource = DataResource.table(ksName, cfName);
-        this.serializers = new Serializers(this);
     }
 
     // This rebuild informations that are intrinsically duplicate of the table definition but
     // are kept because they are often useful in a different format.
     private void rebuild()
     {
-        this.comparator = new ClusteringComparator(extractTypes(clusteringColumns));
-
         Map<ByteBuffer, ColumnDefinition> newColumnMetadata = Maps.newHashMapWithExpectedSize(partitionKeyColumns.size() + clusteringColumns.size() + partitionColumns.size());
         for (ColumnDefinition def : partitionKeyColumns)
             newColumnMetadata.put(def.name.bytes, def);
         for (ColumnDefinition def : clusteringColumns)
-        {
             newColumnMetadata.put(def.name.bytes, def);
-            def.type.checkComparable();
-        }
         for (ColumnDefinition def : partitionColumns)
             newColumnMetadata.put(def.name.bytes, def);
 
         this.columnMetadata = newColumnMetadata;
-
-        List<AbstractType<?>> keyTypes = extractTypes(partitionKeyColumns);
-        this.keyValidator = keyTypes.size() == 1 ? keyTypes.get(0) : CompositeType.getInstance(keyTypes);
 
         if (isCompactTable())
             this.compactValueColumn = CompactTables.getCompactValueColumn(partitionColumns, isSuper());
@@ -787,8 +781,6 @@ public final class CFMetaData
 
         params = cfm.params;
 
-        keyValidator = cfm.keyValidator;
-
         if (!cfm.droppedColumns.isEmpty())
             droppedColumns = cfm.droppedColumns;
 
@@ -816,9 +808,6 @@ public final class CFMetaData
                                                            cfm.cfId, cfId));
         if (!cfm.flags.equals(flags))
             throw new ConfigurationException(String.format("Column family type mismatch (found %s; expected %s)", cfm.flags, flags));
-
-        if (!cfm.comparator.isCompatibleWith(comparator))
-            throw new ConfigurationException(String.format("Column family comparators do not match or are not compatible (found %s; expected %s).", cfm.comparator.toString(), comparator.toString()));
     }
 
 
@@ -956,12 +945,9 @@ public final class CFMetaData
         {
             case PARTITION_KEY:
                 partitionKeyColumns.set(def.position(), def);
-                List<AbstractType<?>> keyTypes = extractTypes(partitionKeyColumns);
-                keyValidator = keyTypes.size() == 1 ? keyTypes.get(0) : CompositeType.getInstance(keyTypes);
                 break;
             case CLUSTERING:
                 clusteringColumns.set(def.position(), def);
-                comparator = new ClusteringComparator(extractTypes(clusteringColumns));
                 break;
             case REGULAR:
             case STATIC:

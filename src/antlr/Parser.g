@@ -787,7 +787,6 @@ alterKeyspaceStatement returns [AlterKeyspaceStatement expr]
     ;
 
 /**
- * ALTER COLUMN FAMILY <CF> ALTER <column> TYPE <newtype>;
  * ALTER COLUMN FAMILY <CF> ADD <column> <newtype>; | ALTER COLUMN FAMILY <CF> ADD (<column> <newtype>,<column1> <newtype1>..... <column n> <newtype n>)
  * ALTER COLUMN FAMILY <CF> DROP <column>; | ALTER COLUMN FAMILY <CF> DROP ( <column>,<column1>.....<column n>)
  * ALTER COLUMN FAMILY <CF> WITH <property> = <value>;
@@ -802,8 +801,7 @@ alterTableStatement returns [AlterTableStatement expr]
         Long deleteTimestamp = null;
     }
     : K_ALTER K_COLUMNFAMILY cf=columnFamilyName
-          ( K_ALTER id=cident  K_TYPE v=comparatorType  { type = AlterTableStatement.Type.ALTER; } { colNameList.add(new AlterTableStatementColumn(id,v)); }
-          | K_ADD  (        (id=cident   v=comparatorType   b1=cfisStatic { colNameList.add(new AlterTableStatementColumn(id,v,b1)); })
+          ( K_ADD  (        (id=cident   v=comparatorType   b1=cfisStatic { colNameList.add(new AlterTableStatementColumn(id,v,b1)); })
                      | ('('  id1=cident  v1=comparatorType  b1=cfisStatic { colNameList.add(new AlterTableStatementColumn(id1,v1,b1)); }
                        ( ',' idn=cident  vn=comparatorType  bn=cfisStatic { colNameList.add(new AlterTableStatementColumn(idn,vn,bn)); } )* ')' ) ) { type = AlterTableStatement.Type.ADD; }
           | K_DROP ( (         id=cident  { colNameList.add(new AlterTableStatementColumn(id)); }
