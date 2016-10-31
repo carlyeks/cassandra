@@ -839,7 +839,6 @@ alterMaterializedViewStatement returns [AlterViewStatement expr]
 
 
 /**
- * ALTER TYPE <name> ALTER <field> TYPE <newtype>;
  * ALTER TYPE <name> ADD <field> <newtype>;
  * ALTER TYPE <name> RENAME <field> TO <newtype> AND ...;
  */
