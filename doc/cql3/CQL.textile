@@ -618,22 +618,17 @@ __Syntax:__
 bc(syntax).. 
 <alter-type-stmt> ::= ALTER TYPE <typename> <instruction>
 
-<instruction> ::= ALTER <field-name> TYPE <type>
-                | ADD <field-name> <type>
+<instruction> ::= ADD <field-name> <type>
                 | RENAME <field-name> TO <field-name> ( AND <field-name> TO <field-name> )*
 p. 
 __Sample:__
 
 bc(sample).. 
-ALTER TYPE address ALTER zip TYPE varint
-
 ALTER TYPE address ADD country text
 
 ALTER TYPE address RENAME zip TO zipcode AND street_name TO street
 p. 
 The @ALTER TYPE@ statement is used to manipulate type definitions. It allows for adding new fields, renaming existing fields, or changing the type of existing fields.
-
-When altering the type of a column, the new type must be compatible with the previous type.
 
 h3(#dropTypeStmt). DROP TYPE
 
