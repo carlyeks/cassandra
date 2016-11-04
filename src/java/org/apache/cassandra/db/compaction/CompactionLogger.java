@@ -232,6 +232,32 @@ public class CompactionLogger
         return node;
     }
 
+    private void addLongStats(ObjectNode node, String name, CompactionTaskStats.LongStats stats)
+    {
+        if (stats.count() != 0)
+        {
+            ObjectNode statsNode = json.objectNode();
+            statsNode.put("min", stats.min());
+            statsNode.put("max", stats.max());
+            statsNode.put("count", stats.count());
+            statsNode.put("sum", stats.sum());
+            statsNode.put("mean", stats.mean());
+
+            node.put(name, statsNode);
+        }
+    }
+
+    private JsonNode transformStats(CompactionTaskStats stats)
+    {
+        ObjectNode node = json.objectNode();
+        node.put("partitionCount", stats.partitionCount);
+        addLongStats(node, "partitionRows", stats.partitionRows);
+        addLongStats(node, "partitionCells", stats.partitionCells);
+        addLongStats(node, "partitionDataSize", stats.partitionDataSize);
+        addLongStats(node, "partitionTombstones", stats.partitionTombstones);
+        return node;
+    }
+
     public void enable()
     {
         if (enabled.compareAndSet(false, true))
@@ -264,7 +290,7 @@ public class CompactionLogger
         }
     }
 
-    public void compaction(long startTime, Collection<SSTableReader> input, long endTime, Collection<SSTableReader> output)
+    public void compaction(long startTime, Collection<SSTableReader> input, long endTime, Collection<SSTableReader> output, CompactionTaskStats compactionStats)
     {
         if (enabled.get())
         {
@@ -275,6 +301,7 @@ public class CompactionLogger
             node.put("end", String.valueOf(endTime));
             node.put("input", sstableMap(input, this::describeSSTable));
             node.put("output", sstableMap(output, this::describeSSTable));
+            node.put("stats", transformStats(compactionStats));
             serializer.write(node, this::startStrategies, this);
         }
     }

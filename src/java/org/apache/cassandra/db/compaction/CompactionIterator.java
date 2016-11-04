@@ -73,14 +73,25 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
 
     private final UnfilteredPartitionIterator compacted;
     private final CompactionMetrics metrics;
+    private final CompactionTaskStats stats;
 
     public CompactionIterator(OperationType type, List<ISSTableScanner> scanners, CompactionController controller, int nowInSec, UUID compactionId)
     {
-        this(type, scanners, controller, nowInSec, compactionId, null);
+        this(type, scanners, controller, nowInSec, compactionId, null, null);
     }
 
     @SuppressWarnings("resource") // We make sure to close mergedIterator in close() and CompactionIterator is itself an AutoCloseable
     public CompactionIterator(OperationType type, List<ISSTableScanner> scanners, CompactionController controller, int nowInSec, UUID compactionId, CompactionMetrics metrics)
+    {
+        this(type, scanners, controller, nowInSec, compactionId, metrics, null);
+    }
+
+    public CompactionIterator(OperationType type, List<ISSTableScanner> scanners, CompactionController controller, int nowInSec, UUID compactionId, CompactionTaskStats stats)
+    {
+        this(type, scanners, controller, nowInSec, compactionId, null, stats);
+    }
+
+    public CompactionIterator(OperationType type, List<ISSTableScanner> scanners, CompactionController controller, int nowInSec, UUID compactionId, CompactionMetrics metrics, CompactionTaskStats stats)
     {
         this.controller = controller;
         this.type = type;
@@ -95,6 +106,7 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
         this.totalBytes = bytes;
         this.mergeCounters = new long[scanners.size()];
         this.metrics = metrics;
+        this.stats = stats;
 
         if (metrics != null)
             metrics.beginCompaction(this);
@@ -159,8 +171,12 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
 
                 CompactionIterator.this.updateCounterFor(merged);
 
-                if (type != OperationType.COMPACTION || !controller.cfs.indexManager.hasIndexes())
+                // If this is not a compaction, we don't gather partition stats or index information
+                if (type != OperationType.COMPACTION)
                     return null;
+
+                if (!controller.cfs.indexManager.hasIndexes())
+                    return stats == null ? null : stats.startPartition();
 
                 Columns statics = Columns.NONE;
                 Columns regulars = Columns.NONE;
@@ -190,7 +206,7 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
                                                                          versions.size(),
                                                                          nowInSec);
 
-                return new UnfilteredRowIterators.MergeListener()
+                UnfilteredRowIterators.MergeListener listener = new UnfilteredRowIterators.MergeListener()
                 {
                     public void onMergedPartitionLevelDeletion(DeletionTime mergedDeletion, DeletionTime[] versions)
                     {
@@ -211,6 +227,7 @@ public class CompactionIterator extends CompactionInfo.Holder implements Unfilte
                     {
                     }
                 };
+                return stats == null ? listener : UnfilteredRowIterators.MergeListener.and(stats.startPartition(), listener);
             }
 
             public void close()

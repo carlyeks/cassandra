@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.db.compaction;
 
+import java.security.MessageDigest;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -30,9 +31,18 @@ import com.google.common.collect.Sets;
 import com.google.common.primitives.Ints;
 import com.google.common.util.concurrent.RateLimiter;
 
+import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.db.ClusteringPrefix;
+import org.apache.cassandra.db.DecoratedKey;
+import org.apache.cassandra.db.DeletionTime;
 import org.apache.cassandra.db.Directories;
+import org.apache.cassandra.db.PartitionColumns;
 import org.apache.cassandra.db.compaction.writers.CompactionAwareWriter;
 import org.apache.cassandra.db.compaction.writers.DefaultCompactionWriter;
+import org.apache.cassandra.db.rows.EncodingStats;
+import org.apache.cassandra.db.rows.Row;
+import org.apache.cassandra.db.rows.Unfiltered;
+import org.apache.cassandra.db.rows.UnfilteredRowIterator;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -158,6 +168,7 @@ public class CompactionTask extends AbstractCompactionTask
         long totalKeysWritten = 0;
         long estimatedKeys = 0;
         long inputSizeBytes;
+        CompactionTaskStats stats = new CompactionTaskStats();
         try (CompactionController controller = getCompactionController(transaction.originals()))
         {
             Set<SSTableReader> actuallyCompact = Sets.difference(transaction.originals(), controller.getFullyExpiredSSTables());
@@ -172,7 +183,7 @@ public class CompactionTask extends AbstractCompactionTask
             int nowInSec = FBUtilities.nowInSeconds();
             try (Refs<SSTableReader> refs = Refs.ref(actuallyCompact);
                  AbstractCompactionStrategy.ScannerList scanners = strategy.getScanners(actuallyCompact);
-                 CompactionIterator ci = new CompactionIterator(compactionType, scanners.scanners, controller, nowInSec, taskId))
+                 CompactionIterator ci = new CompactionIterator(compactionType, scanners.scanners, controller, nowInSec, taskId, stats))
             {
                 long lastCheckObsoletion = start;
                 inputSizeBytes = scanners.getTotalCompressedSize();
@@ -262,7 +273,11 @@ public class CompactionTask extends AbstractCompactionTask
                                       mergeSummary));
             logger.trace("CF Total Bytes Compacted: {}", FBUtilities.prettyPrintMemory(CompactionTask.addToTotalBytesCompacted(endsize)));
             logger.trace("Actual #keys: {}, Estimated #keys:{}, Err%: {}", totalKeysWritten, estimatedKeys, ((double)(totalKeysWritten - estimatedKeys)/totalKeysWritten));
-            cfs.getCompactionStrategyManager().compactionLogger.compaction(startTime, transaction.originals(), System.currentTimeMillis(), newSStables);
+            cfs.getCompactionStrategyManager().compactionLogger.compaction(startTime,
+                                                                           transaction.originals(),
+                                                                           System.currentTimeMillis(),
+                                                                           newSStables,
+                                                                           stats);
 
             // update the metrics
             cfs.metric.compactionBytesWritten.inc(endsize);
