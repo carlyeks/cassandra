@@ -85,6 +85,9 @@ New features
 
 Upgrading
 ---------
+    - Support for alter types of already defined tables has been disabled. If it is
+      necessary to return a different type, please use casting instead. See
+      CASSANDRA-12443 for more details.
     - Request timeouts in cassandra.yaml (read_request_timeout_in_ms, etc) now apply to the
       "full" request time on the coordinator.  Previously, they only covered the time from
       when the coordinator sent a message to a replica until the time that the replica
