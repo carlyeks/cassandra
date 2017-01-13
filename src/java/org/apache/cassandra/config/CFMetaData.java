@@ -297,11 +297,11 @@ public final class CFMetaData
         this.clusteringColumns = clusteringColumns;
         this.partitionColumns = partitionColumns;
 
-        this.serializers = new Serializers(this);
-
         this.comparator = new ClusteringComparator(extractTypes(clusteringColumns));
         List<AbstractType<?>> keyTypes = extractTypes(partitionKeyColumns);
         this.keyValidator = keyTypes.size() == 1 ? keyTypes.get(0) : CompositeType.getInstance(keyTypes);
+
+        this.serializers = new Serializers(this);
 
         rebuild();
 
